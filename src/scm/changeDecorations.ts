@@ -51,6 +51,15 @@ export class ChangeDecorationsProvider implements vscode.FileDecorationProvider,
     }
   }
 
+  /** The current change kind for an absolute filesystem path, if any. */
+  kindForPath(fsPath: string): ChangeKind | undefined {
+    for (const map of this.byRepo.values()) {
+      const kind = map.get(fsPath);
+      if (kind) return kind;
+    }
+    return undefined;
+  }
+
   /** Drop a repo's state entirely (provider unregister). */
   clearRepoState(repoRoot: string): void {
     const previous = this.byRepo.get(repoRoot);

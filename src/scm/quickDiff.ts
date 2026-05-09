@@ -6,6 +6,7 @@ import { parseUnifiedDiff } from '../diversion/parsers/unifiedDiff.js';
 import { reverseApply } from '../diversion/reverseApply.js';
 import { looksBinary } from '../util/binary.js';
 import { toForwardSlashes } from '../util/path.js';
+import type { ChangeKind } from '../diversion/types.js';
 import type { Logger } from '../util/log.js';
 
 /** URI scheme used for "the base content of <path>". */
@@ -13,6 +14,12 @@ export const DV_SCHEME = 'dv-base';
 
 interface RepoLookup {
   rootForPath(fsPath: string): { root: string; dvPath: string | undefined } | undefined;
+  /**
+   * Returns the current change kind for an absolute filesystem path, or
+   * undefined if the file isn't in the SCM change set. Used to skip the
+   * gutter QuickDiff on entirely-new files (whole-file-green is noisy).
+   */
+  kindForPath?(fsPath: string): ChangeKind | undefined;
 }
 
 async function realpathOrSelf(p: string): Promise<string> {
@@ -69,6 +76,10 @@ export class QuickDiff implements vscode.QuickDiffProvider, vscode.TextDocumentC
   provideOriginalResource(uri: vscode.Uri): vscode.ProviderResult<vscode.Uri> {
     if (uri.scheme !== 'file') return undefined;
     if (!this.lookup.rootForPath(uri.fsPath)) return undefined;
+    // Skip QuickDiff on newly-added files. VS Code would otherwise diff
+    // the working content against an empty base, painting every line green
+    // — visually noisy and provides no useful information.
+    if (this.lookup.kindForPath?.(uri.fsPath) === 'added') return undefined;
     return uri.with({ scheme: DV_SCHEME });
   }
 

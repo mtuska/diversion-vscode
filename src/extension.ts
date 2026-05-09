@@ -54,6 +54,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
       return undefined;
     },
+    kindForPath: (fsPath: string) => changeDecorations?.kindForPath(fsPath),
   };
   quickDiff = new QuickDiff(repoLookup, log);
   commitContent = new CommitContentProvider(repoLookup, log);
@@ -62,6 +63,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     () => [...providers.values()].map((p) => p.repo),
     log,
   );
+  // Instantiate before repoLookup uses it via closure (the kindForPath
+  // arrow above captures the binding, not the value).
   changeDecorations = new ChangeDecorationsProvider(log);
   blame = new Blame(
     {
@@ -815,7 +818,14 @@ async function openResourceCommand(uri: vscode.Uri, kind?: ChangeKind): Promise<
       await vscode.commands.executeCommand('vscode.open', uri);
       return;
     }
-    const left = uri.with({ scheme: DV_SCHEME });
+    // Disambiguate the diff-editor URI from the gutter-QuickDiff URI by
+    // adding a query parameter. Same scheme + same path + different query
+    // means VS Code creates a separate TextModel for the diff-editor's
+    // left side; otherwise we'd hit "Cannot add model because it already
+    // exists" when the QuickDiff for the right-side editor's gutter
+    // races with the diff-editor's own setup. Our content provider
+    // ignores the query so resolution still works.
+    const left = uri.with({ scheme: DV_SCHEME, query: 'view=diff' });
     const title = `${path.basename(uri.fsPath)} (base ↔ Working tree)`;
     logger?.info(`[click] -> vscode.diff left=${left.toString()} right=${uri.toString()}`);
     await vscode.commands.executeCommand('vscode.diff', left, uri, title);
