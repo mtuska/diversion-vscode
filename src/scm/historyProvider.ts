@@ -10,7 +10,7 @@ import type { Logger } from '../util/log.js';
  * Diversion commits, branches, and per-commit file changes.
  *
  * Requires `enabledApiProposals: ["scmHistoryProvider"]` in package.json
- * AND the user running with `--enable-proposed-api diversion.diversion-vscode`
+ * AND the user running with `--enable-proposed-api mtuska.diversion-vscode`
  * (or VS Code Insiders). When the proposal stabilises this file's typings
  * move from `types/vscode.proposed.scmHistoryProvider.d.ts` to the standard
  * `@types/vscode` and we drop the opt-in.

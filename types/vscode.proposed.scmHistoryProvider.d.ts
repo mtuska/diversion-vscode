@@ -6,7 +6,7 @@
 // Vendored from microsoft/vscode `src/vscode-dts/vscode.proposed.scmHistoryProvider.d.ts`.
 // Tracking https://github.com/microsoft/vscode/issues/185269. Until this lands as a stable
 // API, the extension manifest must declare `"enabledApiProposals": ["scmHistoryProvider"]`
-// AND end users must run VS Code with `--enable-proposed-api diversion.diversion-vscode`
+// AND end users must run VS Code with `--enable-proposed-api mtuska.diversion-vscode`
 // (or use VS Code Insiders) for the SCM Graph view to populate.
 
 declare module 'vscode' {

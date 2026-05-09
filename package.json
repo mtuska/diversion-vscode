@@ -2,13 +2,17 @@
   "name": "diversion-vscode",
   "displayName": "Diversion",
   "description": "Source control integration for Diversion (https://www.diversion.dev) — register Diversion as a first-class SCM provider in VS Code.",
-  "version": "0.1.0",
-  "publisher": "diversion",
+  "version": "0.3.0",
+  "publisher": "mtuska",
   "license": "Unlicense",
   "repository": {
     "type": "git",
-    "url": "https://github.com/diversion/diversion-vscode.git"
+    "url": "https://github.com/mtuska/diversion-vscode.git"
   },
+  "bugs": {
+    "url": "https://github.com/mtuska/diversion-vscode/issues"
+  },
+  "homepage": "https://github.com/mtuska/diversion-vscode#readme",
   "engines": {
     "vscode": "^1.93.0"
   },

@@ -20,7 +20,7 @@ the `scmHistoryProvider` proposed API. To use it, start VS Code with the
 proposed API enabled for this extension:
 
 ```bash
-code --enable-proposed-api diversion.diversion-vscode
+code --enable-proposed-api mtuska.diversion-vscode
 ```
 
 VS Code Insiders enables proposed APIs automatically. If the flag isn't
@@ -33,7 +33,7 @@ There's no Marketplace publication yet. Three options:
 
 ### Option 1: install the latest `.vsix` from a release
 
-Download the `.vsix` from the [Releases page](https://github.com/diversion/diversion-vscode/releases),
+Download the `.vsix` from the [Releases page](https://github.com/mtuska/diversion-vscode/releases),
 then:
 
 ```bash
@@ -47,7 +47,7 @@ code --install-extension diversion-vscode-<version>.vsix
 To enable the SCM Graph view (one-time per install):
 
 ```bash
-code --enable-proposed-api diversion.diversion-vscode
+code --enable-proposed-api mtuska.diversion-vscode
 ```
 
 (Or use VS Code Insiders, which enables proposed APIs automatically.)
@@ -55,7 +55,7 @@ code --enable-proposed-api diversion.diversion-vscode
 ### Option 2: build from source
 
 ```bash
-git clone https://github.com/diversion/diversion-vscode.git
+git clone https://github.com/mtuska/diversion-vscode.git
 cd diversion-vscode
 npm install
 npm run package          # produces diversion-vscode-<version>.vsix
@@ -65,7 +65,7 @@ code --install-extension diversion-vscode-*.vsix
 ### Option 3: run unpacked from source (development)
 
 ```bash
-git clone https://github.com/diversion/diversion-vscode.git
+git clone https://github.com/mtuska/diversion-vscode.git
 cd diversion-vscode
 npm install
 npm run build            # or `npm run watch` for incremental rebuilds
