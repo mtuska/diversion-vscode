@@ -179,6 +179,12 @@ export class DiversionScmProvider implements vscode.Disposable {
 
       let hidden = 0;
       for (const change of state.changes) {
+        // Decorations are populated for *every* changed file in the
+        // repo, regardless of which workspace folders are open. The
+        // open-folder filter only narrows the SCM panel listing —
+        // applying it here too left the explorer un-decorated until
+        // the user expanded down to each file.
+        decorationStates.set(path.join(this.repo.root, change.path), change.kind);
         if (!this.isPathVisible(change.path)) { hidden++; continue; }
         const isStaged = this.stagedPaths.has(change.path);
         const rstate = toResourceState(this.repo.root, change, isStaged);
@@ -187,7 +193,6 @@ export class DiversionScmProvider implements vscode.Disposable {
         } else {
           changes.push(rstate);
         }
-        decorationStates.set(path.join(this.repo.root, change.path), change.kind);
       }
 
       const conflicts: vscode.SourceControlResourceState[] = [];

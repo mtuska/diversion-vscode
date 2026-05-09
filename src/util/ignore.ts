@@ -177,8 +177,57 @@ export class IgnoreManager {
     // patterns in order and later patterns override earlier ones, so
     // dvignore "takes precedence" on conflicts (e.g. a dvignore
     // negation un-ignoring a gitignore'd file).
+    // .gitignore is left strict (the way git itself reads it). Only
+    // .dvignore gets the lenient mid-slash rewrite — that's where dv's
+    // observed "match anywhere" behaviour shows up.
     if (gitContent) matcher.add(gitContent);
-    if (dvContent) matcher.add(dvContent);
+    if (dvContent) matcher.add(unanchorContent(dvContent));
     this.matchers.set(dir, matcher);
   }
+}
+
+/**
+ * Rewrite .dvignore content so mid-slash patterns match at any depth,
+ * matching `dv`'s observed lenient behaviour rather than gitignore's
+ * strict "mid-slash means anchored to this file's directory" rule.
+ *
+ * Concretely: a line like `Binaries/*` is rewritten to `**`+`/Binaries/*`
+ * so it ignores `FaunaPrototype/Binaries/...` even when the .dvignore
+ * lives a level above. dv silently treats untracked files inside such
+ * folders as ignored, so without this our explorer decoration would
+ * disagree with `dv status`.
+ *
+ * Only .dvignore gets this treatment — .gitignore is interpreted
+ * strictly (the way git itself reads it), and dv reads .gitignore for
+ * compatibility under those same strict rules.
+ *
+ * Lines we leave untouched:
+ *   - blanks and comments
+ *   - explicitly anchored patterns (`/foo`, `!/foo`)
+ *   - patterns with no internal slash (`*.so`, `Build/`) — the `ignore`
+ *     library already matches those at any depth
+ */
+function unanchorContent(content: string): string {
+  return content.split('\n').map(unanchorPattern).join('\n');
+}
+
+function unanchorPattern(line: string): string {
+  // Preserve trailing CR in CRLF files and any trailing whitespace —
+  // the `ignore` library tolerates them and round-tripping keeps line
+  // numbers stable for any future debugging.
+  const trimmed = line.replace(/\s+$/, '');
+  if (!trimmed || trimmed.startsWith('#')) return line;
+
+  let prefix = '';
+  let body = trimmed;
+  if (body.startsWith('!')) { prefix = '!'; body = body.slice(1); }
+  if (body.startsWith('/')) return line; // explicitly anchored — keep as-is
+
+  // Only rewrite when there's a slash *inside* the pattern (not just a
+  // trailing one). Patterns like `*.so` or `Build/` already match at any
+  // depth under gitignore semantics.
+  const withoutTrailingSlash = body.replace(/\/$/, '');
+  if (!withoutTrailingSlash.includes('/')) return line;
+
+  return `${prefix}**/${body}`;
 }
