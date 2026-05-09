@@ -18,6 +18,13 @@ on:
 permissions:
   contents: write
 
+# Opt into Node.js 24 inside the JavaScript-based actions (checkout,
+# setup-node, upload-artifact). The runner will force this in June 2026
+# anyway; setting it now removes the deprecation warning and surfaces any
+# Node-24-specific incompatibilities early.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   release:
     name: Build + attach .vsix
@@ -40,7 +47,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
       - name: Install dependencies
