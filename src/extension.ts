@@ -171,6 +171,11 @@ async function healthCheck(log: Logger): Promise<void> {
     const health = await daemon.health();
     log.info(`Daemon healthy at ${await daemon.baseUrl()} (dv ${health.Version})`);
     warnIfIncompatibleVersion(log, health.Version);
+    // Wire up the persistent commit-content cache once we know dv's version.
+    // Cache is segmented by version so old-version artifacts don't leak in.
+    if (commitContent && activationContext) {
+      commitContent.attachPersistence(activationContext.globalStorageUri, health.Version);
+    }
   } catch (err) {
     if (err instanceof DaemonUnavailableError) {
       log.warn(`Daemon unreachable: ${err.message}. Filesystem fallback in use.`);
@@ -233,7 +238,9 @@ async function scanWorkspaceFolders(): Promise<void> {
       }
 
       const repo = new Repo(daemon, id, settings.dvPath, log);
-      const provider = new DiversionScmProvider(repo, log, activationContext!.workspaceState, quickDiff);
+      const provider = new DiversionScmProvider(
+        repo, log, activationContext!.workspaceState, quickDiff, commitContent,
+      );
       providers.set(fsPath, provider);
       log.info(`Registered SCM provider for ${id.repoName} on ${id.branchName || '<unknown branch>'} (${id.commitId || '<no commit>'}) at ${fsPath}`);
 

@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { commitContentUri } from './commitContent.js';
+import { commitContentUri, type CommitContentProvider } from './commitContent.js';
 import type { Repo } from '../diversion/repo.js';
 import type { Logger } from '../util/log.js';
 
@@ -39,6 +39,7 @@ export class DiversionHistoryProvider implements vscode.SourceControlHistoryProv
   constructor(
     private readonly repo: Repo,
     private readonly logger: Logger,
+    private readonly commitContent: CommitContentProvider | undefined,
   ) {}
 
   // Convenience accessors used both by the API and by callers in extension.ts.
@@ -157,10 +158,25 @@ export class DiversionHistoryProvider implements vscode.SourceControlHistoryProv
   ): Promise<vscode.SourceControlHistoryItemChange[]> {
     const tStart = Date.now();
     try {
-      const changes = await this.repo.fileChangesForCommit(historyItemId);
+      // Kick off the file-list call in parallel with both per-commit prefetches
+      // so VS Code's per-URI requests hit a warm cache instead of spawning N
+      // dv diff processes themselves.
+      const showPromise = this.repo.fileChangesForCommit(historyItemId);
+      const prefetchPromises: Promise<void>[] = [];
+      if (this.commitContent) {
+        prefetchPromises.push(
+          this.commitContent.prefetchAtCommit(historyItemId, this.repo.root, this.repo.binaryPath),
+        );
+        if (historyItemParentId) {
+          prefetchPromises.push(
+            this.commitContent.prefetchAtCommit(historyItemParentId, this.repo.root, this.repo.binaryPath),
+          );
+        }
+      }
+      const [changes] = await Promise.all([showPromise, ...prefetchPromises]);
       this.logger.info(
         `[history] provideHistoryItemChanges(${historyItemId}) · ` +
-        `dv show=${Date.now() - tStart}ms (${changes.length} file(s))`
+        `total=${Date.now() - tStart}ms (${changes.length} file(s)), prefetch parallel`
       );
       // The "parent" for diff purposes is the linear predecessor — we
       // reuse the parentId VS Code passes us if it's there, otherwise we

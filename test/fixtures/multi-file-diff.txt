@@ -1,0 +1,21 @@
+diff --git a/Source/A.cpp b/Source/A.cpp
+--- a/Source/A.cpp
++++ b/Source/A.cpp
+@@ -1,3 +1,3 @@
+ line1
+-old-a
++new-a
+ line3
+diff --git a/Source/B.cpp b/Source/B.cpp
+--- a/Source/B.cpp
++++ b/Source/B.cpp
+@@ -1,2 +1,2 @@
+-only-old
++only-new
+ b-line
+diff --git a/Documentation/CLAUDE.md b/Documentation/CLAUDE.md
+--- a/Documentation/CLAUDE.md
++++ b/Documentation/CLAUDE.md
+@@ -10,1 +10,2 @@
+ keep
++added
