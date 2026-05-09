@@ -27,6 +27,15 @@ const MAX_DIRS = 5000; // safety cap on the recursive scan
  */
 export class IgnoreManager {
   private readonly matchers = new Map<string, ReturnType<typeof ignore>>();
+  /**
+   * Absolute paths of directories whose entire contents are ignored —
+   * either because every file under them matches a pattern or because
+   * every subdirectory is itself fully ignored. Lets us gray out a
+   * folder in the explorer when it isn't *directly* matched by any
+   * .dvignore / .gitignore line but everything inside it is, mirroring
+   * git's SCM behaviour.
+   */
+  private readonly ignoredDirs = new Set<string>();
   private repoRoot: string | undefined;
 
   constructor(private readonly logger: Logger) {}
@@ -35,6 +44,7 @@ export class IgnoreManager {
   async load(repoRoot: string): Promise<void> {
     this.repoRoot = repoRoot;
     this.matchers.clear();
+    this.ignoredDirs.clear();
     const t0 = Date.now();
     let dirsScanned = 0;
     await this.scanDir(repoRoot, () => {
@@ -43,18 +53,23 @@ export class IgnoreManager {
     });
     this.logger.info(
       `[ignore] loaded ${this.matchers.size} ignore file(s) ` +
-      `from ${dirsScanned} dir(s) under ${repoRoot} (${Date.now() - t0}ms)`,
+      `from ${dirsScanned} dir(s) under ${repoRoot} ` +
+      `(${this.ignoredDirs.size} fully-ignored dir(s)) ` +
+      `(${Date.now() - t0}ms)`,
     );
   }
 
   /**
    * Returns true if the given absolute path is ignored by any .dvignore /
-   * .gitignore at or above its directory (within the repo).
+   * .gitignore at or above its directory (within the repo), or — for
+   * directories — if every entry it contains is itself ignored.
    */
   isIgnored(absPath: string): boolean {
     if (!this.repoRoot) return false;
     if (!isInsideOrEqual(this.repoRoot, absPath)) return false;
     if (this.containsSkippedSegment(absPath)) return false;
+
+    if (this.ignoredDirs.has(absPath)) return true;
 
     let dir = path.dirname(absPath);
     while (true) {
@@ -92,13 +107,22 @@ export class IgnoreManager {
     return false;
   }
 
-  private async scanDir(dir: string, budget: () => boolean): Promise<void> {
-    if (!budget()) return;
+  /**
+   * Recursively scan `dir`, loading ignore files as we go and computing
+   * which directories are "fully ignored" (every entry inside is
+   * ignored). Returns true iff `dir` itself is fully ignored.
+   *
+   * The roll-up has to happen here, in the same pass that loads the
+   * matchers, so that by the time we check a file with `isIgnored` its
+   * directory and every ancestor's matcher is already in `this.matchers`.
+   */
+  private async scanDir(dir: string, budget: () => boolean): Promise<boolean> {
+    if (!budget()) return false;
     let entries;
     try {
       entries = await fs.readdir(dir, { withFileTypes: true });
     } catch {
-      return;
+      return false;
     }
 
     const has = (name: string) => entries.some((e) => e.name === name && e.isFile());
@@ -106,14 +130,39 @@ export class IgnoreManager {
       await this.loadDirIgnores(dir);
     }
 
+    // Empty directories don't roll up — git doesn't track them and we
+    // don't want a stray empty folder rendering gray for no reason.
+    let allIgnored = entries.length > 0;
     for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      if (SKIP_DIR_NAMES.has(entry.name)) continue;
-      // Skip symlinked directories — they could loop and we don't follow
-      // symlinks anywhere else in the extension either.
-      if (entry.isSymbolicLink()) continue;
-      await this.scanDir(path.join(dir, entry.name), budget);
+      if (SKIP_DIR_NAMES.has(entry.name)) {
+        // .git / .diversion / node_modules are effectively ignored
+        // from the user's perspective — count them toward the roll-up
+        // but never recurse into them.
+        continue;
+      }
+      if (entry.isSymbolicLink()) {
+        // We don't follow symlinks, so we can't reason about their
+        // contents — be conservative and treat them as not-ignored.
+        allIgnored = false;
+        continue;
+      }
+      const child = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        const childFullyIgnored = await this.scanDir(child, budget);
+        if (!childFullyIgnored) allIgnored = false;
+      } else if (entry.isFile()) {
+        if (!this.isIgnored(child)) allIgnored = false;
+      } else {
+        allIgnored = false;
+      }
     }
+
+    // Don't ever mark the repo root itself — that would gray the
+    // workspace folder in the explorer.
+    if (allIgnored && this.repoRoot && !pathEquals(dir, this.repoRoot)) {
+      this.ignoredDirs.add(dir);
+    }
+    return allIgnored;
   }
 
   private async loadDirIgnores(dir: string): Promise<void> {
