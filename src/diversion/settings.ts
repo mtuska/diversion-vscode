@@ -5,6 +5,7 @@ export interface DvSettings {
   daemonUrl: string | undefined;
   refreshDebounceMs: number;
   scmShowAllRepoChanges: boolean;
+  maxParallelProcesses: number;
 }
 
 export function readSettings(): DvSettings {
@@ -16,5 +17,6 @@ export function readSettings(): DvSettings {
     daemonUrl: daemonUrl || undefined,
     refreshDebounceMs: Math.max(50, cfg.get<number>('refresh.debounceMs', 300)),
     scmShowAllRepoChanges: cfg.get<boolean>('scm.showAllRepoChanges', false),
+    maxParallelProcesses: Math.max(1, Math.min(32, cfg.get<number>('maxParallelProcesses', 4))),
   };
 }

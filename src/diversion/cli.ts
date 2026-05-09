@@ -1,4 +1,24 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import { Semaphore } from '../util/semaphore.js';
+
+/**
+ * Bounds the number of `dv` processes in flight at any one time. Clicking
+ * around in the SCM Graph can easily fan out into many parallel `dv diff`
+ * invocations; without a cap we'd thrash the daemon and the user's CPU.
+ *
+ * The default of 4 matches what feels good on a typical dev box; users can
+ * tune it via the `diversion.maxParallelProcesses` setting which calls
+ * {@link setDvConcurrencyLimit} from extension activation / config-change.
+ */
+const dvSemaphore = new Semaphore(4);
+
+export function setDvConcurrencyLimit(n: number): void {
+  dvSemaphore.setCapacity(n);
+}
+
+export function dvConcurrencyStats(): { inFlight: number; queued: number; capacity: number } {
+  return dvSemaphore.stats();
+}
 
 /**
  * Minimal interface mirroring `vscode.CancellationToken` so this module can
@@ -60,6 +80,10 @@ export class DvError extends Error {
  * for the throw-on-failure variant.
  */
 export function runDv(args: readonly string[], opts: DvRunOptions): Promise<DvResult> {
+  return dvSemaphore.run(() => spawnDv(args, opts));
+}
+
+function spawnDv(args: readonly string[], opts: DvRunOptions): Promise<DvResult> {
   // Resolve the dv binary. Settings can override; otherwise default to the
   // platform-conventional name so PATH lookups work without shell expansion.
   // Node's `spawn` (without `shell: true`) does NOT apply Windows PATHEXT,

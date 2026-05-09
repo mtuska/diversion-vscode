@@ -6,6 +6,7 @@ import { DaemonClient, DaemonUnavailableError } from './diversion/daemon.js';
 import { detectRepo, findDiversionRoot } from './diversion/detect.js';
 import { Repo } from './diversion/repo.js';
 import { readSettings } from './diversion/settings.js';
+import { setDvConcurrencyLimit } from './diversion/cli.js';
 import { DiversionScmProvider } from './scm/provider.js';
 import { QuickDiff, DV_SCHEME } from './scm/quickDiff.js';
 import { CommitContentProvider, DV_COMMIT_SCHEME } from './scm/commitContent.js';
@@ -145,11 +146,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('diversion.shelveAndSwitchBranch', shelveAndSwitchBranchCommand),
   );
 
+  // Apply concurrency cap before any dv calls fire.
+  setDvConcurrencyLimit(readSettings().maxParallelProcesses);
+
   await healthCheck(log);
   await scanWorkspaceFolders();
 
   context.subscriptions.push(
     vscode.workspace.onDidChangeWorkspaceFolders(() => { void scanWorkspaceFolders(); }),
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('diversion.maxParallelProcesses')) {
+        const next = readSettings().maxParallelProcesses;
+        setDvConcurrencyLimit(next);
+        log.info(`[settings] dv concurrency limit → ${next}`);
+      }
+    }),
     vscode.window.onDidChangeWindowState((s) => {
       if (s.focused) for (const p of providers.values()) p.scheduleRefresh(50);
     }),

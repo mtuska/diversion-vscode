@@ -2,7 +2,7 @@
   "name": "diversion-vscode",
   "displayName": "Diversion",
   "description": "Source control integration for Diversion (https://www.diversion.dev) — register Diversion as a first-class SCM provider in VS Code.",
-  "version": "0.3.12",
+  "version": "0.3.13",
   "publisher": "mtuska",
   "license": "Unlicense",
   "repository": {
@@ -264,6 +264,13 @@
           "default": 300,
           "minimum": 50,
           "description": "Debounce window for auto-refresh after file changes."
+        },
+        "diversion.maxParallelProcesses": {
+          "type": "number",
+          "default": 4,
+          "minimum": 1,
+          "maximum": 32,
+          "description": "Maximum number of `dv` CLI processes the extension will run concurrently. Higher values speed up bulk operations like loading commit data in the SCM Graph at the cost of more CPU and daemon load."
         },
         "diversion.binaryExtensions": {
           "type": "array",

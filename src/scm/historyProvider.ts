@@ -156,11 +156,39 @@ export class DiversionHistoryProvider implements vscode.SourceControlHistoryProv
     historyItemParentId: string | undefined,
     _token: vscode.CancellationToken,
   ): Promise<vscode.SourceControlHistoryItemChange[]> {
+    // Wrap in withProgress so the user gets visible feedback while dv chews
+    // through `dv show` + the two `dv diff` prefetches. SourceControl is the
+    // right location — the spinner shows in the SCM panel's title bar where
+    // the click originated, and falls away as soon as the file list lands.
+    // ProgressLocation.SourceControl puts a spinner on the SCM activity bar
+    // icon — visible whether the SCM panel is open or not. We mirror it via
+    // ProgressLocation.Window so users with the status bar in view still see
+    // *something* without a modal popup interrupting them.
+    return vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.SourceControl,
+        title: `Diversion: loading ${shortId(historyItemId)}…`,
+      },
+      () => vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Window,
+          title: `Diversion: loading commit ${shortId(historyItemId)}`,
+        },
+        () => this.loadHistoryItemChanges(historyItemId, historyItemParentId),
+      ),
+    );
+  }
+
+  private async loadHistoryItemChanges(
+    historyItemId: string,
+    historyItemParentId: string | undefined,
+  ): Promise<vscode.SourceControlHistoryItemChange[]> {
     const tStart = Date.now();
     try {
       // Kick off the file-list call in parallel with both per-commit prefetches
       // so VS Code's per-URI requests hit a warm cache instead of spawning N
-      // dv diff processes themselves.
+      // dv diff processes themselves. The shared dv semaphore caps how many
+      // of these actually run at once (see `diversion.maxParallelProcesses`).
       const showPromise = this.repo.fileChangesForCommit(historyItemId);
       const prefetchPromises: Promise<void>[] = [];
       if (this.commitContent) {
