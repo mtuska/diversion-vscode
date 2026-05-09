@@ -60,7 +60,11 @@ export class DvError extends Error {
  * for the throw-on-failure variant.
  */
 export function runDv(args: readonly string[], opts: DvRunOptions): Promise<DvResult> {
-  const dvPath = opts.dvPath ?? 'dv';
+  // Resolve the dv binary. Settings can override; otherwise default to the
+  // platform-conventional name so PATH lookups work without shell expansion.
+  // Node's `spawn` (without `shell: true`) does NOT apply Windows PATHEXT,
+  // so plain "dv" wouldn't find "dv.exe" on Windows.
+  const dvPath = opts.dvPath ?? (process.platform === 'win32' ? 'dv.exe' : 'dv');
   const timeoutMs = opts.timeoutMs ?? 60_000;
 
   return new Promise<DvResult>((resolve, reject) => {

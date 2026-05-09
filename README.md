@@ -6,16 +6,18 @@ Source-control integration for [Diversion](https://www.diversion.dev) — regist
 
 ## Requirements
 
-- The `dv` CLI on your `PATH` (or set `diversion.path`).
-- A workspace cloned with `dv clone` or initialized with `dv init` (the extension activates on the presence of a `.diversion/` directory).
+- The `dv` CLI on your `PATH` (or set `diversion.path`). The extension
+  defaults to `dv` on macOS / Linux and `dv.exe` on Windows.
+- A workspace cloned with `dv clone` or initialized with `dv init` (the
+  extension activates on the presence of a `.diversion/` directory).
 - The Diversion daemon running locally (it is when `dv status` works).
 - VS Code 1.93 or newer.
 
 ### Optional: enable the Source Control Graph view
 
 Diversion populates VS Code's built-in **Source Control Graph** view via
-the `scmHistoryProvider` proposed API. To use it you need to start VS Code
-with the proposed API enabled for this extension:
+the `scmHistoryProvider` proposed API. To use it, start VS Code with the
+proposed API enabled for this extension:
 
 ```bash
 code --enable-proposed-api diversion.diversion-vscode
@@ -24,6 +26,80 @@ code --enable-proposed-api diversion.diversion-vscode
 VS Code Insiders enables proposed APIs automatically. If the flag isn't
 set the rest of the extension still works — you just won't see the graph
 populate until the proposal stabilises and the flag becomes unnecessary.
+
+## Installing
+
+There's no Marketplace publication yet. Three options:
+
+### Option 1: install the latest `.vsix` from a release
+
+Download the `.vsix` from the [Releases page](https://github.com/diversion/diversion-vscode/releases),
+then:
+
+```bash
+# macOS / Linux
+code --install-extension diversion-vscode-<version>.vsix
+
+# Windows (PowerShell or cmd)
+code --install-extension diversion-vscode-<version>.vsix
+```
+
+To enable the SCM Graph view (one-time per install):
+
+```bash
+code --enable-proposed-api diversion.diversion-vscode
+```
+
+(Or use VS Code Insiders, which enables proposed APIs automatically.)
+
+### Option 2: build from source
+
+```bash
+git clone https://github.com/diversion/diversion-vscode.git
+cd diversion-vscode
+npm install
+npm run package          # produces diversion-vscode-<version>.vsix
+code --install-extension diversion-vscode-*.vsix
+```
+
+### Option 3: run unpacked from source (development)
+
+```bash
+git clone https://github.com/diversion/diversion-vscode.git
+cd diversion-vscode
+npm install
+npm run build            # or `npm run watch` for incremental rebuilds
+```
+
+Open the project folder in VS Code and press **F5**. A second VS Code
+window opens with the extension loaded ("Extension Development Host").
+Proposed APIs (the SCM Graph) are auto-enabled in this mode.
+
+### Verifying
+
+After installing, open a Diversion-managed folder. You should see:
+
+- A **Diversion** entry in the **Source Control** view, with a branch pill
+  next to the repo name and a `…` menu.
+- The current branch in the bottom-left status bar.
+- Output channel **Diversion** (View → Output → choose "Diversion") with
+  an activation log line.
+
+If nothing happens, run `Diversion: Show Daemon Health` from the command
+palette — that's the first sanity check.
+
+## Platform support
+
+| Platform | dv binary default | Status |
+|---|---|---|
+| Linux   | `dv`     | Tested. Active development platform. |
+| macOS   | `dv`     | Should work; same `dv` semantics as Linux. Untested. |
+| Windows | `dv.exe` | Should work; path handling is sep-aware and Windows-tested. Untested with a real Windows dv install. |
+
+If you hit a platform-specific issue, file it with the contents of the
+`Diversion` output channel and we'll triage. The `Diversion: Run
+Performance Trace` command's output is also useful — it tells us whether
+the daemon and `dv` itself are responding the way we expect.
 
 ## What this version does
 

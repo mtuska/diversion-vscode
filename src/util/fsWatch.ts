@@ -1,3 +1,4 @@
+import * as path from 'node:path';
 import * as vscode from 'vscode';
 
 /**
@@ -28,13 +29,17 @@ export function watchWorkspace(
   return { dispose: () => { for (const d of disposables) d.dispose(); } };
 }
 
+const SEP = path.sep;
+const IGNORED_SEGMENTS = [
+  `${SEP}.diversion${SEP}`,
+  `${SEP}.git${SEP}`,
+  `${SEP}.vscode${SEP}`,
+];
+
 function isIgnored(fsPath: string, _root: string): boolean {
   // Avoid feedback loops from Diversion's own metadata and editor temp files.
-  return (
-    fsPath.includes('/.diversion/') ||
-    fsPath.includes('/.git/') ||
-    fsPath.includes('/.vscode/') ||
-    fsPath.endsWith('~') ||
-    /\.swp$/.test(fsPath)
-  );
+  for (const seg of IGNORED_SEGMENTS) {
+    if (fsPath.includes(seg)) return true;
+  }
+  return fsPath.endsWith('~') || /\.swp$/.test(fsPath);
 }

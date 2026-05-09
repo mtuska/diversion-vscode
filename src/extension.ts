@@ -16,6 +16,7 @@ import { watchWorkspace } from './util/fsWatch.js';
 import { StatusBar } from './ui/statusBar.js';
 import { showLogWebview } from './ui/webviews/log.js';
 import { looksBinary } from './util/binary.js';
+import { isInsideOrEqual } from './util/path.js';
 import { deleteSidecar } from './diversion/repo.js';
 import type { ChangeKind } from './diversion/types.js';
 
@@ -43,7 +44,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const repoLookup = {
     rootForPath: (fsPath: string) => {
       for (const [root, p] of providers) {
-        if (fsPath.startsWith(root + '/') || fsPath === root) {
+        if (isInsideOrEqual(root, fsPath)) {
           return { root, dvPath: p.repo.binaryPath };
         }
       }
@@ -284,7 +285,7 @@ function activeProvider(): DiversionScmProvider | undefined {
   const editor = vscode.window.activeTextEditor;
   if (editor) {
     for (const [root, p] of providers) {
-      if (editor.document.uri.fsPath.startsWith(root)) return p;
+      if (isInsideOrEqual(root, editor.document.uri.fsPath)) return p;
     }
   }
   return [...providers.values()][0];
@@ -646,7 +647,8 @@ async function commitCommand(sourceControl?: vscode.SourceControl): Promise<void
 // ───── staging commands ─────
 
 function relForResource(provider: DiversionScmProvider, uri: vscode.Uri): string {
-  return path.relative(provider.repo.root, uri.fsPath);
+  // Forward slashes so dv sees a consistent shape on every platform.
+  return path.relative(provider.repo.root, uri.fsPath).replace(/\\/g, '/');
 }
 
 async function stageCommand(...resources: vscode.SourceControlResourceState[]): Promise<void> {
@@ -711,7 +713,7 @@ async function commitSelectedCommand(...resources: vscode.SourceControlResourceS
 
   const paths = resources
     .filter((r) => providerForUri(r.resourceUri) === provider)
-    .map((r) => vscode.workspace.asRelativePath(r.resourceUri, false));
+    .map((r) => vscode.workspace.asRelativePath(r.resourceUri, false).replace(/\\/g, '/'));
 
   try {
     await vscode.window.withProgress(
@@ -799,7 +801,7 @@ async function discardChangesCommand(...resources: vscode.SourceControlResourceS
     const provider = providerForUri(r.resourceUri);
     if (!provider) continue;
     try {
-      const relative = vscode.workspace.asRelativePath(r.resourceUri, false);
+      const relative = vscode.workspace.asRelativePath(r.resourceUri, false).replace(/\\/g, '/');
       await provider.repo.discardPath(relative);
       touched.add(provider);
     } catch (err) {
@@ -1196,7 +1198,7 @@ function pickProvider(sc?: vscode.SourceControl): DiversionScmProvider | undefin
 
 function providerForUri(uri: vscode.Uri): DiversionScmProvider | undefined {
   for (const [root, p] of providers) {
-    if (uri.fsPath.startsWith(root)) return p;
+    if (isInsideOrEqual(root, uri.fsPath)) return p;
   }
   return undefined;
 }

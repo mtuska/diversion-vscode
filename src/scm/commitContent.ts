@@ -6,6 +6,7 @@ import { runDv } from '../diversion/cli.js';
 import { parseUnifiedDiff, splitMultiFileDiff } from '../diversion/parsers/unifiedDiff.js';
 import { reverseApply } from '../diversion/reverseApply.js';
 import { looksBinary } from '../util/binary.js';
+import { toForwardSlashes } from '../util/path.js';
 import type { Logger } from '../util/log.js';
 
 /** URI scheme used for "the contents of <file> at commit <id>". */
@@ -196,7 +197,7 @@ export class CommitContentProvider implements vscode.TextDocumentContentProvider
       this.logger.warn(`[dv-commit] no repo for ${fsPath}`);
       return '';
     }
-    const relPath = path.relative(lookup.root, fsPath) || fsPath;
+    const relPath = toForwardSlashes(path.relative(lookup.root, fsPath) || fsPath);
 
     // Disk cache — commits are immutable so this is always trustworthy
     // (modulo dv version, which we segment by).

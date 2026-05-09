@@ -1,5 +1,6 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
+import { isInsideOrEqual } from '../util/path.js';
 import type { Repo } from '../diversion/repo.js';
 import type { Logger } from '../util/log.js';
 
@@ -61,9 +62,8 @@ export class LockDecorationProvider implements vscode.FileDecorationProvider, vs
 
   private findRepo(fsPath: string): { repo: Repo; root: string } | undefined {
     for (const repo of this.repos()) {
-      const root = repo.root;
-      if (fsPath === root || fsPath.startsWith(root + path.sep)) {
-        return { repo, root };
+      if (isInsideOrEqual(repo.root, fsPath)) {
+        return { repo, root: repo.root };
       }
     }
     return undefined;

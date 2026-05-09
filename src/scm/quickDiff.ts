@@ -5,6 +5,7 @@ import { runDvOrThrow } from '../diversion/cli.js';
 import { parseUnifiedDiff } from '../diversion/parsers/unifiedDiff.js';
 import { reverseApply } from '../diversion/reverseApply.js';
 import { looksBinary } from '../util/binary.js';
+import { toForwardSlashes } from '../util/path.js';
 import type { Logger } from '../util/log.js';
 
 /** URI scheme used for "the base content of <path>". */
@@ -124,8 +125,10 @@ export class QuickDiff implements vscode.QuickDiffProvider, vscode.TextDocumentC
     // a symlink (/home → /var/home on Fedora Atomic) cause dv to silently
     // report "No changes detected" — verified against dv v0.9.895 by spawning
     // the same command both ways. Relative paths sidestep the issue and are
-    // also what dv likely intends as the canonical form.
-    const relPath = await workspaceRelative(lookup.root, uri.fsPath);
+    // also what dv likely intends as the canonical form. Forward slashes
+    // for cross-platform consistency (dv accepts both, but its internal
+    // representation is POSIX-style).
+    const relPath = toForwardSlashes(await workspaceRelative(lookup.root, uri.fsPath));
     let stdout = '';
     try {
       const r = await runDvOrThrow(
