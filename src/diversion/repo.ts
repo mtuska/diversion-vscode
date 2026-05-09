@@ -6,6 +6,7 @@ import { parseDiffNameStatus } from './parsers/diffNameStatus.js';
 import { parseBranchList, type BranchInfo } from './parsers/branch.js';
 import { parseLogOneline, parseLogFull, type CommitSummary, type CommitDetails } from './parsers/log.js';
 import { parseLockList, type LockInfo } from './parsers/lock.js';
+import { parseShelfList, type ShelfInfo } from './parsers/shelf.js';
 import { parseAnnotation, type Annotation } from './parsers/annotate.js';
 import { findSyncConflicts, type SyncConflict } from './conflicts.js';
 import type { DaemonClient } from './daemon.js';
@@ -218,6 +219,43 @@ export class Repo {
   async restorePath(ref: string, relPath: string): Promise<void> {
     await runDvOrThrow(['restore', relPath, '--source', ref], {
       cwd: this.root, dvPath: this.dvPath, timeoutMs: 0,
+    });
+  }
+
+  // ───── shelves ─────
+
+  async listShelves(): Promise<ShelfInfo[]> {
+    const r = await runDvOrThrow(['shelf'], { cwd: this.root, dvPath: this.dvPath });
+    return parseShelfList(r.stdout);
+  }
+
+  /**
+   * Create a shelf from the current workspace changes.
+   * @param paths   workspace-relative paths to shelve. Empty/undefined = all changes.
+   * @param keepWorkingChanges  if true, pass --no-reset to keep working tree intact.
+   */
+  async createShelf(name: string, paths?: readonly string[], keepWorkingChanges = false): Promise<void> {
+    const args = ['shelf', 'create', name];
+    if (paths && paths.length > 0) args.push(...paths);
+    if (keepWorkingChanges) args.push('--no-reset');
+    await runDvOrThrow(args, { cwd: this.root, dvPath: this.dvPath, timeoutMs: 0 });
+  }
+
+  async applyShelf(shelf: string, keepShelfAfter = false): Promise<void> {
+    const args = ['shelf', 'apply', shelf, '-f'];
+    if (keepShelfAfter) args.push('--keep');
+    await runDvOrThrow(args, { cwd: this.root, dvPath: this.dvPath, timeoutMs: 0 });
+  }
+
+  async deleteShelf(shelf: string): Promise<void> {
+    await runDvOrThrow(['shelf', 'delete', shelf, '-f'], {
+      cwd: this.root, dvPath: this.dvPath, timeoutMs: 30_000,
+    });
+  }
+
+  async renameShelf(shelf: string, newName: string): Promise<void> {
+    await runDvOrThrow(['shelf', 'rename', shelf, newName], {
+      cwd: this.root, dvPath: this.dvPath, timeoutMs: 30_000,
     });
   }
 

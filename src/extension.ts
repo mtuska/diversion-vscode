@@ -10,6 +10,7 @@ import { DiversionScmProvider } from './scm/provider.js';
 import { QuickDiff, DV_SCHEME } from './scm/quickDiff.js';
 import { LockDecorationProvider } from './scm/lockDecorations.js';
 import { Blame } from './scm/blame.js';
+import { ShelvesTreeProvider, type ShelfNode } from './scm/shelvesView.js';
 import { watchWorkspace } from './util/fsWatch.js';
 import { StatusBar } from './ui/statusBar.js';
 import { showLogWebview } from './ui/webviews/log.js';
@@ -23,6 +24,7 @@ let statusBar: StatusBar | undefined;
 let quickDiff: QuickDiff | undefined;
 let lockDecorations: LockDecorationProvider | undefined;
 let blame: Blame | undefined;
+let shelvesProvider: ShelvesTreeProvider | undefined;
 const providers = new Map<string, DiversionScmProvider>();
 let activationContext: vscode.ExtensionContext | undefined;
 
@@ -64,6 +66,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     },
     log,
   );
+  shelvesProvider = new ShelvesTreeProvider(
+    () => [...providers.values()].map((p) => p.repo),
+    log,
+  );
 
   context.subscriptions.push(
     statusBar,
@@ -72,6 +78,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     blame,
     vscode.workspace.registerTextDocumentContentProvider(DV_SCHEME, quickDiff),
     vscode.window.registerFileDecorationProvider(lockDecorations),
+    vscode.window.registerTreeDataProvider('diversion.shelves', shelvesProvider),
     { dispose: () => log.dispose() },
     {
       dispose: () => {
@@ -115,6 +122,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('diversion.cherryPickCommit', cherryPickCommand),
     vscode.commands.registerCommand('diversion.revertCommit', revertCommitCommand),
     vscode.commands.registerCommand('diversion.revertToCommit', revertToCommitCommand),
+    vscode.commands.registerCommand('diversion.refreshShelves', () => shelvesProvider?.refresh()),
+    vscode.commands.registerCommand('diversion.createShelf', createShelfCommand),
+    vscode.commands.registerCommand('diversion.applyShelf', applyShelfCommand),
+    vscode.commands.registerCommand('diversion.deleteShelf', deleteShelfCommand),
+    vscode.commands.registerCommand('diversion.renameShelf', renameShelfCommand),
+    vscode.commands.registerCommand('diversion.shelveAndSwitchBranch', shelveAndSwitchBranchCommand),
   );
 
   await healthCheck(log);
@@ -819,6 +832,158 @@ async function revertToCommitCommand(commitId?: string): Promise<void> {
   } catch (err) {
     void vscode.window.showErrorMessage(`Diversion: restore failed: ${(err as Error).message}`);
   }
+}
+
+// ───── shelves ─────
+
+async function createShelfCommand(): Promise<void> {
+  const provider = activeProvider();
+  if (!provider) return;
+  const name = await vscode.window.showInputBox({
+    prompt: 'Shelf name',
+    placeHolder: 'e.g. wip-inventory-ui',
+    validateInput: (s) => s.trim() ? undefined : 'Name required',
+  });
+  if (!name) return;
+  const choice = await vscode.window.showQuickPick(
+    [
+      { label: 'Shelve & reset workspace (default)', detail: 'Workspace returns to base; shelf holds your changes', keep: false },
+      { label: 'Shelve & keep working changes', detail: '--no-reset (the changes stay in the workspace too)', keep: true },
+    ],
+    { placeHolder: 'How should the workspace be left after shelving?' },
+  );
+  if (!choice) return;
+  try {
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.SourceControl, title: `dv shelf create ${name.trim()}` },
+      () => provider.repo.createShelf(name.trim(), undefined, choice.keep),
+    );
+    shelvesProvider?.refresh();
+    await provider.refresh();
+  } catch (err) {
+    void vscode.window.showErrorMessage(`Diversion: shelf create failed: ${(err as Error).message}`);
+  }
+}
+
+async function applyShelfCommand(node?: ShelfNode): Promise<void> {
+  const target = await pickShelfFromNodeOrPrompt(node, 'Apply which shelf?');
+  if (!target) return;
+  const choice = await vscode.window.showQuickPick(
+    [
+      { label: 'Apply and delete (default)', detail: 'Shelf is removed after applying', keep: false },
+      { label: 'Apply and keep', detail: '--keep (shelf stays after applying)', keep: true },
+    ],
+    { placeHolder: 'Apply mode' },
+  );
+  if (!choice) return;
+  try {
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.SourceControl, title: `dv shelf apply ${target.shelf}` },
+      () => target.repo.applyShelf(target.shelf, choice.keep),
+    );
+    shelvesProvider?.refresh();
+    for (const p of providers.values()) await p.refresh();
+  } catch (err) {
+    void vscode.window.showErrorMessage(`Diversion: shelf apply failed: ${(err as Error).message}`);
+  }
+}
+
+async function deleteShelfCommand(node?: ShelfNode): Promise<void> {
+  const target = await pickShelfFromNodeOrPrompt(node, 'Delete which shelf?');
+  if (!target) return;
+  const ok = await vscode.window.showWarningMessage(
+    `Delete shelf "${target.shelf}"? This cannot be undone.`,
+    { modal: true }, 'Delete',
+  );
+  if (ok !== 'Delete') return;
+  try {
+    await target.repo.deleteShelf(target.shelf);
+    shelvesProvider?.refresh();
+  } catch (err) {
+    void vscode.window.showErrorMessage(`Diversion: shelf delete failed: ${(err as Error).message}`);
+  }
+}
+
+async function renameShelfCommand(node?: ShelfNode): Promise<void> {
+  const target = await pickShelfFromNodeOrPrompt(node, 'Rename which shelf?');
+  if (!target) return;
+  const newName = await vscode.window.showInputBox({
+    prompt: 'New shelf name',
+    value: target.shelf,
+    validateInput: (s) => s.trim() ? undefined : 'Name required',
+  });
+  if (!newName || newName.trim() === target.shelf) return;
+  try {
+    await target.repo.renameShelf(target.shelf, newName.trim());
+    shelvesProvider?.refresh();
+  } catch (err) {
+    void vscode.window.showErrorMessage(`Diversion: shelf rename failed: ${(err as Error).message}`);
+  }
+}
+
+async function shelveAndSwitchBranchCommand(): Promise<void> {
+  const provider = activeProvider();
+  if (!provider) return;
+  let branches;
+  try {
+    branches = await provider.repo.listBranches();
+  } catch (err) {
+    void vscode.window.showErrorMessage(`Diversion: list branches failed: ${(err as Error).message}`);
+    return;
+  }
+  const current = provider.repo.info.branchName;
+  const items = branches
+    .filter((b) => b.name !== current)
+    .map((b) => ({ label: b.name, description: b.commitId, detail: b.id, branchName: b.name }));
+  if (items.length === 0) {
+    void vscode.window.showInformationMessage('Diversion: no other branches to switch to.');
+    return;
+  }
+  const pick = await vscode.window.showQuickPick(items, {
+    placeHolder: `Shelve current changes and switch from ${current} to…`,
+  });
+  if (!pick) return;
+  try {
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.SourceControl, title: `dv checkout --shelve-changes ${pick.branchName}` },
+      () => provider.repo.checkout(pick.branchName, { shelveChanges: true }),
+    );
+    shelvesProvider?.refresh();
+    await provider.refresh();
+    updateStatusBar();
+  } catch (err) {
+    void vscode.window.showErrorMessage(`Diversion: shelve-and-switch failed: ${(err as Error).message}`);
+  }
+}
+
+interface ShelfTarget {
+  shelf: string;
+  repo: import('./diversion/repo.js').Repo;
+}
+
+async function pickShelfFromNodeOrPrompt(node: ShelfNode | undefined, prompt: string): Promise<ShelfTarget | undefined> {
+  if (node && node.kind === 'shelf') {
+    return { shelf: node.shelf.id ?? node.shelf.name, repo: node.repo };
+  }
+  const provider = activeProvider();
+  if (!provider) return undefined;
+  let shelves;
+  try {
+    shelves = await provider.repo.listShelves();
+  } catch (err) {
+    void vscode.window.showErrorMessage(`Diversion: list shelves failed: ${(err as Error).message}`);
+    return undefined;
+  }
+  if (shelves.length === 0) {
+    void vscode.window.showInformationMessage('Diversion: no shelves to choose from.');
+    return undefined;
+  }
+  const pick = await vscode.window.showQuickPick(
+    shelves.map((s) => ({ label: s.name, description: s.id, detail: s.description, shelf: s })),
+    { placeHolder: prompt },
+  );
+  if (!pick) return undefined;
+  return { shelf: pick.shelf.id ?? pick.shelf.name, repo: provider.repo };
 }
 
 async function ensureCommitId(provided: string | undefined, prompt: string): Promise<string | undefined> {
