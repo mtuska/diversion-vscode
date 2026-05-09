@@ -135,6 +135,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('diversion.toggleBlame', () => blame?.toggle()),
     vscode.commands.registerCommand('diversion.daemonHealth', daemonHealthCommand),
     vscode.commands.registerCommand('diversion.perfTrace', perfTraceCommand),
+    vscode.commands.registerCommand('diversion.clearCommitCache', clearCommitCacheCommand),
     vscode.commands.registerCommand('diversion.cherryPickCommit', cherryPickCommand),
     vscode.commands.registerCommand('diversion.revertCommit', revertCommitCommand),
     vscode.commands.registerCommand('diversion.revertToCommit', revertToCommitCommand),
@@ -543,6 +544,18 @@ async function perfTraceCommand(): Promise<void> {
   log.info('[perf] If "dv diff <file> (cold)" >> "daemon GET /workspaces", the cost is in dv (binary spawn + daemon round-trip + cloud fetch), not us.');
   log.info('────────────────────────────────────────');
   void vscode.window.showInformationMessage('Diversion: perf trace complete (see Output → Diversion).');
+}
+
+async function clearCommitCacheCommand(): Promise<void> {
+  if (!commitContent) {
+    void vscode.window.showWarningMessage('Diversion: commit content provider not initialised.');
+    return;
+  }
+  const result = await commitContent.clearAll();
+  const where = result.cacheDir ? ` at ${result.cacheDir}` : ' (in-memory only — no on-disk cache attached yet)';
+  void vscode.window.showInformationMessage(
+    `Diversion: cleared ${result.files} cache file(s) (${(result.bytes / 1024).toFixed(1)}KB)${where}`,
+  );
 }
 
 async function daemonHealthCommand(): Promise<void> {

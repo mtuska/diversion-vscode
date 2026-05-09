@@ -2,7 +2,7 @@
   "name": "diversion-vscode",
   "displayName": "Diversion",
   "description": "Source control integration for Diversion (https://www.diversion.dev) — register Diversion as a first-class SCM provider in VS Code.",
-  "version": "0.3.13",
+  "version": "0.3.14",
   "publisher": "mtuska",
   "license": "Unlicense",
   "repository": {
@@ -193,6 +193,11 @@
       {
         "command": "diversion.perfTrace",
         "title": "Run Performance Trace",
+        "category": "Diversion"
+      },
+      {
+        "command": "diversion.clearCommitCache",
+        "title": "Clear Commit Content Cache",
         "category": "Diversion"
       },
       {

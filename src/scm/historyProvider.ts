@@ -185,26 +185,33 @@ export class DiversionHistoryProvider implements vscode.SourceControlHistoryProv
   ): Promise<vscode.SourceControlHistoryItemChange[]> {
     const tStart = Date.now();
     try {
-      // Kick off the file-list call in parallel with both per-commit prefetches
-      // so VS Code's per-URI requests hit a warm cache instead of spawning N
-      // dv diff processes themselves. The shared dv semaphore caps how many
-      // of these actually run at once (see `diversion.maxParallelProcesses`).
-      const showPromise = this.repo.fileChangesForCommit(historyItemId);
+      // Phase 1: get the file list. We need this before we can split the
+      // prefetch into parallel chunks (so chunks know which files to ask for).
+      // It's a single quick `dv show --name-status` — typically <300ms even
+      // on big commits.
+      const changes = await this.repo.fileChangesForCommit(historyItemId);
+      const filePaths = changes.map((c) => c.path);
+      const tAfterShow = Date.now();
+
+      // Phase 2: prefetch both sides of the diff in parallel. With a large
+      // file list, prefetchAtCommit fans each side into N concurrent
+      // `dv diff` chunks — actually exercising `diversion.maxParallelProcesses`.
       const prefetchPromises: Promise<void>[] = [];
       if (this.commitContent) {
         prefetchPromises.push(
-          this.commitContent.prefetchAtCommit(historyItemId, this.repo.root, this.repo.binaryPath),
+          this.commitContent.prefetchAtCommit(historyItemId, this.repo.root, this.repo.binaryPath, filePaths),
         );
         if (historyItemParentId) {
           prefetchPromises.push(
-            this.commitContent.prefetchAtCommit(historyItemParentId, this.repo.root, this.repo.binaryPath),
+            this.commitContent.prefetchAtCommit(historyItemParentId, this.repo.root, this.repo.binaryPath, filePaths),
           );
         }
       }
-      const [changes] = await Promise.all([showPromise, ...prefetchPromises]);
+      await Promise.all(prefetchPromises);
       this.logger.info(
         `[history] provideHistoryItemChanges(${historyItemId}) · ` +
-        `total=${Date.now() - tStart}ms (${changes.length} file(s)), prefetch parallel`
+        `total=${Date.now() - tStart}ms (show=${tAfterShow - tStart}ms, ` +
+        `prefetch=${Date.now() - tAfterShow}ms, ${changes.length} file(s))`,
       );
       // The "parent" for diff purposes is the linear predecessor — we
       // reuse the parentId VS Code passes us if it's there, otherwise we
