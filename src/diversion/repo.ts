@@ -100,13 +100,32 @@ export class Repo {
   }
 
   private async expandAddedDirectories(changes: FileChange[]): Promise<FileChange[]> {
-    // dv reports both the new directory and the new files inside it, so a
-    // naive expansion produces N copies of each leaf (one for the leaf's
-    // own entry, plus one for each ancestor directory entry). Dedup by
-    // path as we go: each path makes it into the output at most once.
+    // dv lists ancestor directories alongside individual files when it
+    // already enumerated the file children itself (the common case — `dv
+    // status` printed the dir + files together). For those directory
+    // entries we do nothing: skip the dir, let the file entries pass
+    // through. .dvignore is honored automatically because dv applied it
+    // when producing the listing.
+    //
+    // Only when dv listed a "new" directory WITHOUT enumerating any files
+    // inside (typical for a freshly-dropped subtree with no committed
+    // siblings) do we walk the disk to populate file entries — an
+    // intentional trade-off because we'd otherwise show a single un-
+    // commit-able folder row and the user would have nothing to act on.
+    const addedPaths = changes
+      .filter((c) => c.kind === 'added')
+      .map((c) => c.path);
+    const sep = path.sep;
+    const hasAddedDescendant = (parentRel: string): boolean => {
+      const prefix = parentRel.endsWith(sep) ? parentRel : parentRel + sep;
+      const altPrefix = parentRel.endsWith('/') ? parentRel : parentRel + '/';
+      return addedPaths.some(
+        (p) => p !== parentRel && (p.startsWith(prefix) || p.startsWith(altPrefix)),
+      );
+    };
+
     const out: FileChange[] = [];
     const seenAdded = new Set<string>();
-
     const emitAdded = (relPath: string): void => {
       if (seenAdded.has(relPath)) return;
       seenAdded.add(relPath);
@@ -125,6 +144,14 @@ export class Repo {
         emitAdded(change.path);
         continue;
       }
+      if (hasAddedDescendant(change.path)) {
+        // dv already listed file children — they'll be emitted by their
+        // own iteration. Drop the directory entry itself.
+        continue;
+      }
+      // No file children in dv's output — fall back to a disk walk to
+      // populate the panel. Caveat: anything `.dvignore`d inside this
+      // subtree won't be filtered (we don't read .dvignore ourselves).
       const files = await listFilesRecursive(abs);
       for (const file of files) {
         emitAdded(path.relative(this.identity.workspacePath, file));
