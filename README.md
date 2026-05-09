@@ -1,5 +1,8 @@
 # Diversion for VS Code
 
+[![CI](https://github.com/mtuska/diversion-vscode/actions/workflows/ci.yml/badge.svg)](https://github.com/mtuska/diversion-vscode/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/mtuska/diversion-vscode?include_prereleases&sort=semver)](https://github.com/mtuska/diversion-vscode/releases/latest)
+
 Source-control integration for [Diversion](https://www.diversion.dev) — registers Diversion as a first-class SCM provider so you can commit, branch, diff, switch, and merge from inside VS Code.
 
 > **Status: v0.1 (early).** Tested against `dv v0.9.x`. Coexists peacefully with the built-in Git provider; activates only in folders managed by Diversion.
