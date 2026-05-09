@@ -100,7 +100,19 @@ export class Repo {
   }
 
   private async expandAddedDirectories(changes: FileChange[]): Promise<FileChange[]> {
+    // dv reports both the new directory and the new files inside it, so a
+    // naive expansion produces N copies of each leaf (one for the leaf's
+    // own entry, plus one for each ancestor directory entry). Dedup by
+    // path as we go: each path makes it into the output at most once.
     const out: FileChange[] = [];
+    const seenAdded = new Set<string>();
+
+    const emitAdded = (relPath: string): void => {
+      if (seenAdded.has(relPath)) return;
+      seenAdded.add(relPath);
+      out.push({ kind: 'added', path: relPath });
+    };
+
     for (const change of changes) {
       if (change.kind !== 'added') {
         out.push(change);
@@ -110,13 +122,12 @@ export class Repo {
       let stat: import('node:fs').Stats | undefined;
       try { stat = await fs.stat(abs); } catch { /* path no longer present */ }
       if (!stat?.isDirectory()) {
-        out.push(change);
+        emitAdded(change.path);
         continue;
       }
       const files = await listFilesRecursive(abs);
       for (const file of files) {
-        const rel = path.relative(this.identity.workspacePath, file);
-        out.push({ kind: 'added', path: rel });
+        emitAdded(path.relative(this.identity.workspacePath, file));
       }
     }
     return out;
