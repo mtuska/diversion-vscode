@@ -13,6 +13,7 @@ import { Blame } from './scm/blame.js';
 import { watchWorkspace } from './util/fsWatch.js';
 import { StatusBar } from './ui/statusBar.js';
 import { showLogWebview } from './ui/webviews/log.js';
+import { GraphWebview } from './ui/webviews/graph.js';
 import { looksBinary } from './util/binary.js';
 import { deleteSidecar } from './diversion/repo.js';
 import type { ChangeKind } from './diversion/types.js';
@@ -110,6 +111,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('diversion.verify', verifyCommand),
     vscode.commands.registerCommand('diversion.toggleBlame', () => blame?.toggle()),
     vscode.commands.registerCommand('diversion.daemonHealth', daemonHealthCommand),
+    vscode.commands.registerCommand('diversion.showGraph', showGraphCommand),
+    vscode.commands.registerCommand('diversion.cherryPickCommit', cherryPickCommand),
+    vscode.commands.registerCommand('diversion.revertCommit', revertCommitCommand),
+    vscode.commands.registerCommand('diversion.revertToCommit', revertToCommitCommand),
   );
 
   await healthCheck(log);
@@ -283,6 +288,7 @@ async function moreActionsCommand(): Promise<void> {
     { label: '$(unlock) Unlock File', command: 'diversion.unlockFile' },
     { label: '$(list-tree) List Locks…', command: 'diversion.listLocks' },
     sep('View'),
+    { label: '$(git-commit) Show Graph', command: 'diversion.showGraph' },
     { label: '$(history) View History', command: 'diversion.viewHistory' },
     { label: '$(globe) Open in Web UI', command: 'diversion.openInWeb' },
     { label: '$(eye) Toggle Blame (Annotation)', command: 'diversion.toggleBlame' },
@@ -729,6 +735,100 @@ async function viewHistoryCommand(sourceControl?: vscode.SourceControl): Promise
   } catch (err) {
     void vscode.window.showErrorMessage(`Diversion: load history failed: ${(err as Error).message}`);
   }
+}
+
+const graphWebviews = new Map<string, GraphWebview>();
+
+async function showGraphCommand(): Promise<void> {
+  const provider = activeProvider();
+  if (!provider) {
+    void vscode.window.showInformationMessage('Diversion: no active workspace.');
+    return;
+  }
+  const root = provider.repo.root;
+  let view = graphWebviews.get(root);
+  if (!view) {
+    view = new GraphWebview(provider.repo, logger!);
+    graphWebviews.set(root, view);
+    activationContext?.subscriptions.push(view);
+  }
+  try {
+    await view.show();
+  } catch (err) {
+    void vscode.window.showErrorMessage(`Diversion: graph failed: ${(err as Error).message}`);
+  }
+}
+
+async function cherryPickCommand(commitId?: string): Promise<void> {
+  const provider = activeProvider();
+  if (!provider) return;
+  const id = await ensureCommitId(commitId, 'Cherry-pick which commit?');
+  if (!id) return;
+  try {
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.SourceControl, title: `dv cherry-pick ${id}` },
+      () => provider.repo.cherryPick(id),
+    );
+    await provider.refresh();
+    updateStatusBar();
+    void vscode.window.showInformationMessage(`Cherry-picked ${id}.`);
+  } catch (err) {
+    void vscode.window.showErrorMessage(`Diversion: cherry-pick failed: ${(err as Error).message}`);
+  }
+}
+
+async function revertCommitCommand(commitId?: string): Promise<void> {
+  const provider = activeProvider();
+  if (!provider) return;
+  const id = await ensureCommitId(commitId, 'Revert which commit?');
+  if (!id) return;
+  const ok = await vscode.window.showWarningMessage(
+    `Create a new commit that inverts ${id}?`,
+    { modal: true }, 'Revert',
+  );
+  if (ok !== 'Revert') return;
+  try {
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.SourceControl, title: `dv revert ${id}` },
+      () => provider.repo.revertCommit(id),
+    );
+    await provider.refresh();
+    updateStatusBar();
+  } catch (err) {
+    void vscode.window.showErrorMessage(`Diversion: revert failed: ${(err as Error).message}`);
+  }
+}
+
+async function revertToCommitCommand(commitId?: string): Promise<void> {
+  const provider = activeProvider();
+  if (!provider) return;
+  const id = await ensureCommitId(commitId, 'Restore workspace to which commit?');
+  if (!id) return;
+  const ok = await vscode.window.showWarningMessage(
+    `Set the workspace contents to match ${id}? Local uncommitted changes may be lost. (No history is rewritten — the result will be saved as workspace changes you can then commit.)`,
+    { modal: true }, 'Restore To',
+  );
+  if (ok !== 'Restore To') return;
+  try {
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.SourceControl, title: `dv revert-to-commit ${id}` },
+      () => provider.repo.revertToCommit(id),
+    );
+    await provider.refresh();
+    updateStatusBar();
+  } catch (err) {
+    void vscode.window.showErrorMessage(`Diversion: restore failed: ${(err as Error).message}`);
+  }
+}
+
+async function ensureCommitId(provided: string | undefined, prompt: string): Promise<string | undefined> {
+  if (provided) return provided;
+  const v = await vscode.window.showInputBox({
+    prompt,
+    placeHolder: 'e.g. dv.commit.42',
+    validateInput: (s) => /^dv\.commit\.[\w-]+$/.test(s.trim()) ? undefined : 'Expected a commit ID like "dv.commit.42"',
+  });
+  return v?.trim();
 }
 
 async function switchBranchCommand(): Promise<void> {

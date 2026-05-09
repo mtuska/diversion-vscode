@@ -184,6 +184,43 @@ export class Repo {
     return parseAnnotation(r.stdout);
   }
 
+  /** File changes introduced by a single commit. */
+  async fileChangesForCommit(commitId: string): Promise<FileChange[]> {
+    const r = await runDvOrThrow(
+      ['show', commitId, '--name-status', '--color', 'never'],
+      { cwd: this.root, dvPath: this.dvPath, timeoutMs: 60_000 },
+    );
+    return parseDiffNameStatus(r.stdout);
+  }
+
+  /** Cherry-pick a commit's changes into the current workspace. */
+  async cherryPick(commitId: string): Promise<void> {
+    await runDvOrThrow(['cherry-pick', commitId], {
+      cwd: this.root, dvPath: this.dvPath, timeoutMs: 0,
+    });
+  }
+
+  /** Revert the changes of a past commit (creates a new commit that inverts it). */
+  async revertCommit(commitId: string, conflictResolution?: 'manual' | 'keep-current' | 'accept-incoming'): Promise<void> {
+    const args = ['revert', commitId];
+    if (conflictResolution) args.push('--conflict_resolution', conflictResolution);
+    await runDvOrThrow(args, { cwd: this.root, dvPath: this.dvPath, timeoutMs: 0 });
+  }
+
+  /** Set the workspace contents to match the given commit (does not rewrite history). */
+  async revertToCommit(commitId: string): Promise<void> {
+    await runDvOrThrow(['revert-to-commit', commitId], {
+      cwd: this.root, dvPath: this.dvPath, timeoutMs: 0,
+    });
+  }
+
+  /** Restore a single file from a ref into the workspace. */
+  async restorePath(ref: string, relPath: string): Promise<void> {
+    await runDvOrThrow(['restore', relPath, '--source', ref], {
+      cwd: this.root, dvPath: this.dvPath, timeoutMs: 0,
+    });
+  }
+
   /** List all hard locks visible to this workspace. Cached briefly. */
   async listLocks(): Promise<LockInfo[]> {
     if (this.locksCache && Date.now() - this.locksCacheAt < 5_000) {

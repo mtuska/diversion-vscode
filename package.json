@@ -181,6 +181,27 @@
         "command": "diversion.daemonHealth",
         "title": "Show Daemon Health",
         "category": "Diversion"
+      },
+      {
+        "command": "diversion.showGraph",
+        "title": "Show Graph",
+        "category": "Diversion",
+        "icon": "$(git-commit)"
+      },
+      {
+        "command": "diversion.cherryPickCommit",
+        "title": "Cherry-pick Commit",
+        "category": "Diversion"
+      },
+      {
+        "command": "diversion.revertCommit",
+        "title": "Revert Commit",
+        "category": "Diversion"
+      },
+      {
+        "command": "diversion.revertToCommit",
+        "title": "Restore Workspace To Commit",
+        "category": "Diversion"
       }
     ],
     "configuration": {
@@ -238,12 +259,13 @@
         { "command": "diversion.unlockFile", "when": "scmProvider == diversion", "group": "4_locks@2" },
         { "command": "diversion.listLocks", "when": "scmProvider == diversion", "group": "4_locks@3" },
 
-        { "command": "diversion.viewHistory", "when": "scmProvider == diversion", "group": "5_view@1" },
-        { "command": "diversion.openInWeb", "when": "scmProvider == diversion", "group": "5_view@2" },
-        { "command": "diversion.toggleBlame", "when": "scmProvider == diversion", "group": "5_view@3" },
-        { "command": "diversion.verify", "when": "scmProvider == diversion", "group": "5_view@4" },
-        { "command": "diversion.daemonHealth", "when": "scmProvider == diversion", "group": "5_view@5" },
-        { "command": "diversion.showOutput", "when": "scmProvider == diversion", "group": "5_view@6" }
+        { "command": "diversion.showGraph", "when": "scmProvider == diversion", "group": "5_view@1" },
+        { "command": "diversion.viewHistory", "when": "scmProvider == diversion", "group": "5_view@2" },
+        { "command": "diversion.openInWeb", "when": "scmProvider == diversion", "group": "5_view@3" },
+        { "command": "diversion.toggleBlame", "when": "scmProvider == diversion", "group": "5_view@4" },
+        { "command": "diversion.verify", "when": "scmProvider == diversion", "group": "5_view@5" },
+        { "command": "diversion.daemonHealth", "when": "scmProvider == diversion", "group": "5_view@6" },
+        { "command": "diversion.showOutput", "when": "scmProvider == diversion", "group": "5_view@7" }
       ],
       "scm/resourceState/context": [
         {
