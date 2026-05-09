@@ -12,10 +12,19 @@ const PROVIDER_ID = 'diversion';
  */
 export class DiversionScmProvider implements vscode.Disposable {
   private readonly sc: vscode.SourceControl;
+  private readonly groupStaged: vscode.SourceControlResourceGroup;
   private readonly groupChanges: vscode.SourceControlResourceGroup;
   private readonly groupNew: vscode.SourceControlResourceGroup;
   private readonly groupConflicts: vscode.SourceControlResourceGroup;
   private readonly disposables: vscode.Disposable[] = [];
+
+  /**
+   * Workspace-relative paths the user has explicitly "staged" for the next
+   * commit. Diversion has no real staging area, so this is purely a UI
+   * concept maintained in memory: when commit fires with this set non-empty,
+   * we pass `dv commit <paths> -m`; otherwise we use `dv commit -a -m`.
+   */
+  private readonly stagedPaths = new Set<string>();
 
   private refreshTimer: NodeJS.Timeout | undefined;
   private inFlight: Promise<void> | undefined;
@@ -42,15 +51,18 @@ export class DiversionScmProvider implements vscode.Disposable {
       this.sc.quickDiffProvider = quickDiffProvider;
     }
 
-    // Order matters — Conflicts first so the user sees them above other work.
+    // Order matters — Conflicts first (must-act-on), then the git-style
+    // Staged group above unstaged Changes / New.
     this.groupConflicts = this.sc.createResourceGroup('conflicts', 'Conflicts');
+    this.groupStaged = this.sc.createResourceGroup('staged', 'Staged Changes');
     this.groupChanges = this.sc.createResourceGroup('changes', 'Changes');
     this.groupNew = this.sc.createResourceGroup('new', 'New');
     this.groupConflicts.hideWhenEmpty = true;
+    this.groupStaged.hideWhenEmpty = true;
     this.groupChanges.hideWhenEmpty = true;
     this.groupNew.hideWhenEmpty = true;
 
-    this.disposables.push(this.sc, this.groupConflicts, this.groupChanges, this.groupNew);
+    this.disposables.push(this.sc, this.groupConflicts, this.groupStaged, this.groupChanges, this.groupNew);
   }
 
   get sourceControl(): vscode.SourceControl { return this.sc; }
@@ -87,13 +99,27 @@ export class DiversionScmProvider implements vscode.Disposable {
         this.repo.getState(),
         this.repo.refreshIdentity(),
       ]);
+
+      // Drop any staged paths that no longer correspond to a change (e.g. the
+      // user reverted the file or it was committed elsewhere).
+      const livePaths = new Set(state.changes.map((c) => c.path));
+      for (const p of [...this.stagedPaths]) {
+        if (!livePaths.has(p)) this.stagedPaths.delete(p);
+      }
+
+      const staged: vscode.SourceControlResourceState[] = [];
       const modifiedDeleted: vscode.SourceControlResourceState[] = [];
       const added: vscode.SourceControlResourceState[] = [];
 
       for (const change of state.changes) {
         const rstate = toResourceState(this.repo.root, change);
-        if (change.kind === 'added') added.push(rstate);
-        else modifiedDeleted.push(rstate);
+        if (this.stagedPaths.has(change.path)) {
+          staged.push(rstate);
+        } else if (change.kind === 'added') {
+          added.push(rstate);
+        } else {
+          modifiedDeleted.push(rstate);
+        }
       }
 
       const conflicts: vscode.SourceControlResourceState[] = state.conflicts.map((c) => ({
@@ -108,16 +134,66 @@ export class DiversionScmProvider implements vscode.Disposable {
       }));
 
       this.groupConflicts.resourceStates = conflicts;
+      this.groupStaged.resourceStates = staged;
       this.groupChanges.resourceStates = modifiedDeleted;
       this.groupNew.resourceStates = added;
-      this.sc.count = conflicts.length + modifiedDeleted.length + added.length;
+      this.sc.count = conflicts.length + staged.length + modifiedDeleted.length + added.length;
       this.updateTitleButtons();
       this.logger.debug(
-        `[scm] refresh: ${conflicts.length} conflicts + ${modifiedDeleted.length} changes + ${added.length} new`,
+        `[scm] refresh: ${conflicts.length} conflicts + ${staged.length} staged + ${modifiedDeleted.length} changes + ${added.length} new`,
       );
     } catch (err) {
       this.logger.error(`[scm] refresh failed for ${this.repo.root}`, err);
     }
+  }
+
+  // ───── staging API ─────
+
+  /** All currently-changed workspace-relative paths from the last refresh. */
+  private allChangedPaths(): string[] {
+    const out: string[] = [];
+    for (const r of this.groupStaged.resourceStates) out.push(this.relPath(r.resourceUri));
+    for (const r of this.groupChanges.resourceStates) out.push(this.relPath(r.resourceUri));
+    for (const r of this.groupNew.resourceStates) out.push(this.relPath(r.resourceUri));
+    return out;
+  }
+
+  /** Paths the user has staged for the next commit. */
+  getStagedPaths(): string[] {
+    return [...this.stagedPaths];
+  }
+
+  stage(paths: readonly string[]): void {
+    let added = false;
+    for (const p of paths) if (!this.stagedPaths.has(p)) { this.stagedPaths.add(p); added = true; }
+    if (added) this.scheduleRefresh(0);
+  }
+
+  unstage(paths: readonly string[]): void {
+    let removed = false;
+    for (const p of paths) if (this.stagedPaths.delete(p)) removed = true;
+    if (removed) this.scheduleRefresh(0);
+  }
+
+  stageAll(): void {
+    let added = false;
+    for (const p of this.allChangedPaths()) if (!this.stagedPaths.has(p)) { this.stagedPaths.add(p); added = true; }
+    if (added) this.scheduleRefresh(0);
+  }
+
+  unstageAll(): void {
+    if (this.stagedPaths.size === 0) return;
+    this.stagedPaths.clear();
+    this.scheduleRefresh(0);
+  }
+
+  /** Clear staging state — call after a successful commit. */
+  clearStaged(): void {
+    this.stagedPaths.clear();
+  }
+
+  private relPath(uri: vscode.Uri): string {
+    return path.relative(this.repo.root, uri.fsPath);
   }
 
   /**

@@ -94,6 +94,7 @@ function identityFromDaemon(ws: DaemonWorkspace, workspacePath: string): RepoIde
     commitId: ws.CommitID,
     paused: ws.Paused,
     readOnly: ws.ReadOnly,
+    tier: ws.OrganizationTier,
   };
 }
 
@@ -134,5 +135,6 @@ async function identityFromFilesystem(root: string): Promise<RepoIdentity | unde
     commitId: parsed.CommitID ?? '',
     paused: parsed.Paused ?? false,
     readOnly: parsed.ReadOnly ?? false,
+    tier: parsed.OrganizationTier ?? '',
   };
 }

@@ -40,6 +40,8 @@ export class StatusBar implements vscode.Disposable {
       `Repo: ${id.repoName}`,
       `Branch: ${id.branchName} (${id.branchId})`,
       `Commit: ${id.commitId}`,
+      `Workspace ID: ${id.workspaceId}`,
+      `Tier: ${id.tier || '(unknown)'}`,
       id.paused ? 'Sync: paused' : 'Sync: active',
       'Click to switch branch',
     ].join('\n');

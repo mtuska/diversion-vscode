@@ -9,6 +9,7 @@ import { readSettings } from './diversion/settings.js';
 import { DiversionScmProvider } from './scm/provider.js';
 import { QuickDiff, DV_SCHEME } from './scm/quickDiff.js';
 import { LockDecorationProvider } from './scm/lockDecorations.js';
+import { Blame } from './scm/blame.js';
 import { watchWorkspace } from './util/fsWatch.js';
 import { StatusBar } from './ui/statusBar.js';
 import { showLogWebview } from './ui/webviews/log.js';
@@ -20,6 +21,7 @@ let logger: Logger | undefined;
 let statusBar: StatusBar | undefined;
 let quickDiff: QuickDiff | undefined;
 let lockDecorations: LockDecorationProvider | undefined;
+let blame: Blame | undefined;
 const providers = new Map<string, DiversionScmProvider>();
 let activationContext: vscode.ExtensionContext | undefined;
 
@@ -52,11 +54,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     () => [...providers.values()].map((p) => p.repo),
     log,
   );
+  blame = new Blame(
+    {
+      forUri: (uri) => {
+        const provider = providerForUri(uri);
+        return provider ? { repo: provider.repo, root: provider.repo.root } : undefined;
+      },
+    },
+    log,
+  );
 
   context.subscriptions.push(
     statusBar,
     quickDiff,
     lockDecorations,
+    blame,
     vscode.workspace.registerTextDocumentContentProvider(DV_SCHEME, quickDiff),
     vscode.window.registerFileDecorationProvider(lockDecorations),
     { dispose: () => log.dispose() },
@@ -72,6 +84,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('diversion.refresh', refreshAllCommand),
     vscode.commands.registerCommand('diversion.commit', commitCommand),
     vscode.commands.registerCommand('diversion.commitSelected', commitSelectedCommand),
+    vscode.commands.registerCommand('diversion.stage', stageCommand),
+    vscode.commands.registerCommand('diversion.unstage', unstageCommand),
+    vscode.commands.registerCommand('diversion.stageAll', stageAllCommand),
+    vscode.commands.registerCommand('diversion.unstageAll', unstageAllCommand),
     vscode.commands.registerCommand('diversion.openResource', openResourceCommand),
     vscode.commands.registerCommand('diversion.openFile', openFileCommand),
     vscode.commands.registerCommand('diversion.discardChanges', discardChangesCommand),
@@ -92,6 +108,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('diversion.resumeSync', resumeSyncCommand),
     vscode.commands.registerCommand('diversion.updateWorkspace', updateWorkspaceCommand),
     vscode.commands.registerCommand('diversion.verify', verifyCommand),
+    vscode.commands.registerCommand('diversion.toggleBlame', () => blame?.toggle()),
+    vscode.commands.registerCommand('diversion.daemonHealth', daemonHealthCommand),
   );
 
   await healthCheck(log);
@@ -267,7 +285,9 @@ async function moreActionsCommand(): Promise<void> {
     sep('View'),
     { label: '$(history) View History', command: 'diversion.viewHistory' },
     { label: '$(globe) Open in Web UI', command: 'diversion.openInWeb' },
+    { label: '$(eye) Toggle Blame (Annotation)', command: 'diversion.toggleBlame' },
     { label: '$(verified) Verify Repository Integrity', command: 'diversion.verify' },
+    { label: '$(server) Show Daemon Health', command: 'diversion.daemonHealth' },
     { label: '$(output) Show Output Channel', command: 'diversion.showOutput' },
   ];
   const pick = await vscode.window.showQuickPick(items, { placeHolder: 'Diversion: choose an action' });
@@ -318,6 +338,24 @@ async function updateWorkspaceCommand(): Promise<void> {
     updateStatusBar();
   } catch (err) {
     void vscode.window.showErrorMessage(`Diversion: update failed: ${(err as Error).message}`);
+  }
+}
+
+async function daemonHealthCommand(): Promise<void> {
+  const settings = readSettings();
+  const daemon = new DaemonClient(settings.daemonUrl ? { baseUrl: settings.daemonUrl } : {});
+  try {
+    const health = await daemon.health();
+    const url = await daemon.baseUrl();
+    const workspaces = await daemon.workspaces();
+    const count = Object.keys(workspaces).length;
+    const tiers = new Set(Object.values(workspaces).map((w) => w.OrganizationTier));
+    void vscode.window.showInformationMessage(
+      `Diversion daemon: dv ${health.Version} · ${url} · ${count} workspace(s) registered · tier(s): ${[...tiers].join(', ')}`,
+      { modal: false },
+    );
+  } catch (err) {
+    void vscode.window.showErrorMessage(`Diversion daemon unreachable: ${(err as Error).message}`);
   }
 }
 
@@ -469,17 +507,63 @@ async function commitCommand(sourceControl?: vscode.SourceControl): Promise<void
     void vscode.window.showWarningMessage('Diversion: enter a commit message first.');
     return;
   }
+  const staged = provider.getStagedPaths();
+  const useStaged = staged.length > 0;
+  const title = useStaged ? `dv commit (${staged.length} staged)` : 'dv commit -a';
   try {
     await vscode.window.withProgress(
-      { location: vscode.ProgressLocation.SourceControl, title: 'dv commit -a' },
-      async () => provider.repo.commit(message),
+      { location: vscode.ProgressLocation.SourceControl, title },
+      async () => provider.repo.commit(message, useStaged ? staged : undefined),
     );
+    provider.clearStaged();
     provider.sourceControl.inputBox.value = '';
     await provider.refresh();
     updateStatusBar();
   } catch (err) {
     void vscode.window.showErrorMessage(`Diversion commit failed: ${(err as Error).message}`);
   }
+}
+
+// ───── staging commands ─────
+
+function relForResource(provider: DiversionScmProvider, uri: vscode.Uri): string {
+  return path.relative(provider.repo.root, uri.fsPath);
+}
+
+async function stageCommand(...resources: vscode.SourceControlResourceState[]): Promise<void> {
+  await routeStaging(resources, (provider, paths) => provider.stage(paths));
+}
+
+async function unstageCommand(...resources: vscode.SourceControlResourceState[]): Promise<void> {
+  await routeStaging(resources, (provider, paths) => provider.unstage(paths));
+}
+
+async function routeStaging(
+  resources: vscode.SourceControlResourceState[],
+  apply: (provider: DiversionScmProvider, paths: string[]) => void,
+): Promise<void> {
+  if (resources.length === 0) return;
+  const byProvider = new Map<DiversionScmProvider, string[]>();
+  for (const r of resources) {
+    const provider = providerForUri(r.resourceUri);
+    if (!provider) continue;
+    const arr = byProvider.get(provider) ?? [];
+    arr.push(relForResource(provider, r.resourceUri));
+    byProvider.set(provider, arr);
+  }
+  for (const [provider, paths] of byProvider) apply(provider, paths);
+}
+
+async function stageAllCommand(sourceControl?: vscode.SourceControl): Promise<void> {
+  const provider = pickProvider(sourceControl);
+  if (!provider) return;
+  provider.stageAll();
+}
+
+async function unstageAllCommand(sourceControl?: vscode.SourceControl): Promise<void> {
+  const provider = pickProvider(sourceControl);
+  if (!provider) return;
+  provider.unstageAll();
 }
 
 /**

@@ -1,0 +1,20 @@
+dv.commit.10       A. Sample 2026-05-08      1) # Sample.md — Project Context
+                                             2)
+                                             3) Read this first when working anywhere under `~/Sample/Project/`. It captures the
+                                             4) non-obvious decisions and conventions that aren't derivable from reading the file tree.
+                                             5)
+                                             6) ---
+                                             7)
+                                             8) ## What this is
+                                             9)
+                                            10) **Project Sample** is an example codebase used as a fixture for parser tests. It
+                                            11) reproduces the column layout that `dv annotate` produces without leaking any
+                                            12) real project content. Two-developer side project, quarter-based cadence, no fixed
+                                            13) deadlines.
+                                            14)
+                                            15) The defining idea: **Sample lines that exercise the parser** — multi-line context,
+                                            16) committed and uncommitted blocks, and a handful of distinct authors so the
+                                            17) block-grouping logic can be verified end to end.
+uncommitted        (uncommitted)             18)
+                                            19) ---
+dv.commit.7        B. Sample 2026-04-21     20) ## Source control: Diversion (not git)

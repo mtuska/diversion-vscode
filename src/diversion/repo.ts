@@ -6,6 +6,7 @@ import { parseDiffNameStatus } from './parsers/diffNameStatus.js';
 import { parseBranchList, type BranchInfo } from './parsers/branch.js';
 import { parseLogOneline, parseLogFull, type CommitSummary, type CommitDetails } from './parsers/log.js';
 import { parseLockList, type LockInfo } from './parsers/lock.js';
+import { parseAnnotation, type Annotation } from './parsers/annotate.js';
 import { findSyncConflicts, type SyncConflict } from './conflicts.js';
 import type { DaemonClient } from './daemon.js';
 import type { FileChange, RepoIdentity } from './types.js';
@@ -48,6 +49,7 @@ export class Repo {
           commitId: ws.CommitID,
           paused: ws.Paused,
           readOnly: ws.ReadOnly,
+          tier: ws.OrganizationTier,
         });
       }
     } catch (err) {
@@ -172,6 +174,14 @@ export class Repo {
   async verify(): Promise<string> {
     const r = await runDvOrThrow(['verify'], { cwd: this.root, dvPath: this.dvPath, timeoutMs: 0 });
     return r.stdout;
+  }
+
+  /** Per-line attribution for a workspace-relative path. */
+  async annotate(relPath: string): Promise<Annotation[]> {
+    const r = await runDvOrThrow(['annotate', relPath], {
+      cwd: this.root, dvPath: this.dvPath, timeoutMs: 60_000,
+    });
+    return parseAnnotation(r.stdout);
   }
 
   /** List all hard locks visible to this workspace. Cached briefly. */

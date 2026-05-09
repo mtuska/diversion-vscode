@@ -40,6 +40,30 @@
         "category": "Diversion"
       },
       {
+        "command": "diversion.stage",
+        "title": "Stage Changes",
+        "category": "Diversion",
+        "icon": "$(add)"
+      },
+      {
+        "command": "diversion.unstage",
+        "title": "Unstage Changes",
+        "category": "Diversion",
+        "icon": "$(remove)"
+      },
+      {
+        "command": "diversion.stageAll",
+        "title": "Stage All Changes",
+        "category": "Diversion",
+        "icon": "$(add)"
+      },
+      {
+        "command": "diversion.unstageAll",
+        "title": "Unstage All Changes",
+        "category": "Diversion",
+        "icon": "$(remove)"
+      },
+      {
         "command": "diversion.openResource",
         "title": "Open",
         "category": "Diversion"
@@ -146,6 +170,17 @@
         "command": "diversion.verify",
         "title": "Verify Repository Integrity",
         "category": "Diversion"
+      },
+      {
+        "command": "diversion.toggleBlame",
+        "title": "Toggle Blame (Annotation)",
+        "category": "Diversion",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "diversion.daemonHealth",
+        "title": "Show Daemon Health",
+        "category": "Diversion"
       }
     ],
     "configuration": {
@@ -205,8 +240,10 @@
 
         { "command": "diversion.viewHistory", "when": "scmProvider == diversion", "group": "5_view@1" },
         { "command": "diversion.openInWeb", "when": "scmProvider == diversion", "group": "5_view@2" },
-        { "command": "diversion.verify", "when": "scmProvider == diversion", "group": "5_view@3" },
-        { "command": "diversion.showOutput", "when": "scmProvider == diversion", "group": "5_view@4" }
+        { "command": "diversion.toggleBlame", "when": "scmProvider == diversion", "group": "5_view@3" },
+        { "command": "diversion.verify", "when": "scmProvider == diversion", "group": "5_view@4" },
+        { "command": "diversion.daemonHealth", "when": "scmProvider == diversion", "group": "5_view@5" },
+        { "command": "diversion.showOutput", "when": "scmProvider == diversion", "group": "5_view@6" }
       ],
       "scm/resourceState/context": [
         {
@@ -215,14 +252,24 @@
           "group": "navigation"
         },
         {
-          "command": "diversion.commitSelected",
-          "when": "scmProvider == diversion",
+          "command": "diversion.stage",
+          "when": "scmProvider == diversion && (scmResourceGroup == changes || scmResourceGroup == new)",
           "group": "1_modification@1"
         },
         {
-          "command": "diversion.discardChanges",
-          "when": "scmProvider == diversion",
+          "command": "diversion.unstage",
+          "when": "scmProvider == diversion && scmResourceGroup == staged",
+          "group": "1_modification@1"
+        },
+        {
+          "command": "diversion.commitSelected",
+          "when": "scmProvider == diversion && scmResourceGroup != conflicts",
           "group": "1_modification@2"
+        },
+        {
+          "command": "diversion.discardChanges",
+          "when": "scmProvider == diversion && scmResourceGroup != conflicts",
+          "group": "1_modification@3"
         }
       ],
       "scm/resourceState/inline": [
@@ -233,8 +280,18 @@
         },
         {
           "command": "diversion.discardChanges",
-          "when": "scmProvider == diversion && scmResourceState != conflict",
+          "when": "scmProvider == diversion && scmResourceState != conflict && scmResourceGroup != staged",
           "group": "inline@2"
+        },
+        {
+          "command": "diversion.stage",
+          "when": "scmProvider == diversion && (scmResourceGroup == changes || scmResourceGroup == new)",
+          "group": "inline@3"
+        },
+        {
+          "command": "diversion.unstage",
+          "when": "scmProvider == diversion && scmResourceGroup == staged",
+          "group": "inline@3"
         },
         {
           "command": "diversion.markResolved",
@@ -243,6 +300,26 @@
         }
       ],
       "scm/resourceGroup/context": [
+        {
+          "command": "diversion.stageAll",
+          "when": "scmProvider == diversion && (scmResourceGroup == changes || scmResourceGroup == new)",
+          "group": "inline"
+        },
+        {
+          "command": "diversion.unstageAll",
+          "when": "scmProvider == diversion && scmResourceGroup == staged",
+          "group": "inline"
+        },
+        {
+          "command": "diversion.stageAll",
+          "when": "scmProvider == diversion && (scmResourceGroup == changes || scmResourceGroup == new)",
+          "group": "1_modification@1"
+        },
+        {
+          "command": "diversion.unstageAll",
+          "when": "scmProvider == diversion && scmResourceGroup == staged",
+          "group": "1_modification@1"
+        },
         {
           "command": "diversion.markResolved",
           "when": "scmProvider == diversion && scmResourceGroup == conflicts",

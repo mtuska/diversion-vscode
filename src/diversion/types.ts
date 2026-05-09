@@ -39,4 +39,6 @@ export interface RepoIdentity {
   commitId: string;
   paused: boolean;
   readOnly: boolean;
+  /** From the daemon's workspace registry: INDIE / Studio / Enterprise. */
+  tier: string;
 }
