@@ -137,6 +137,12 @@ export async function detectRepo(
   if (!root) return undefined;
 
   try {
+    // Prefer the agent's direct lookup — one request, no client-side
+    // walk of the full registry. Falls back to the registry scan if the
+    // path lookup fails (older agents that pre-date that endpoint, or
+    // a path-comparison miss against the daemon's stored form).
+    const direct = await daemon.workspaceByPath(await canonicalize(root));
+    if (direct) return identityFromDaemon(direct, root);
     const ws = await findRegisteredWorkspace(daemon, root);
     if (ws) return identityFromDaemon(ws, root);
   } catch {

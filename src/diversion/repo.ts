@@ -12,7 +12,12 @@ import { parseShelfList, type ShelfInfo } from './parsers/shelf.js';
 import { parseAnnotation, type Annotation } from './parsers/annotate.js';
 import { findSyncConflicts, type SyncConflict } from './conflicts.js';
 import type { DaemonClient } from './daemon.js';
-import type { FileChange, RepoIdentity } from './types.js';
+import type {
+  FileChange,
+  RepoIdentity,
+  WorkspaceSyncProgress,
+  WorkspaceSyncStatus,
+} from './types.js';
 import type { Logger } from '../util/log.js';
 
 export interface RepoState {
@@ -59,6 +64,49 @@ export class Repo {
       this.logger.warn(`Daemon refresh failed for ${this.identity.repoName}: ${(err as Error).message}`);
     }
     return this.identity;
+  }
+
+  /**
+   * AgentAPI sync state — answers "is this workspace caught up?" without
+   * us having to text-parse `dv status`. Returns `undefined` if the
+   * agent is unreachable so callers can fall back gracefully.
+   */
+  async syncStatus(): Promise<WorkspaceSyncStatus | undefined> {
+    try {
+      return await this.daemon.syncStatus(this.identity.repoId, this.identity.workspaceId);
+    } catch (err) {
+      this.logger.debug(`syncStatus failed: ${(err as Error).message}`);
+      return undefined;
+    }
+  }
+
+  /**
+   * AgentAPI live sync activity — bytes transferred per direction,
+   * queue size, current action. Polled by the status bar while a sync
+   * is in flight. Returns `undefined` if the agent is unreachable or
+   * the workspace isn't actively syncing.
+   */
+  async syncProgress(): Promise<WorkspaceSyncProgress | undefined> {
+    try {
+      return await this.daemon.syncProgress(this.identity.repoId, this.identity.workspaceId);
+    } catch (err) {
+      this.logger.debug(`syncProgress failed: ${(err as Error).message}`);
+      return undefined;
+    }
+  }
+
+  /**
+   * Wake the agent to pick up a change we *know* just landed (e.g.
+   * right after a commit), shortening the time before `/sync` reports
+   * the new state. Best-effort: errors are swallowed so callers don't
+   * have to wrap each call in try/catch.
+   */
+  async notifySyncRequired(): Promise<void> {
+    try {
+      await this.daemon.notifySyncRequired(this.identity.repoId, this.identity.workspaceId);
+    } catch (err) {
+      this.logger.debug(`notifySyncRequired failed: ${(err as Error).message}`);
+    }
   }
 
   /**

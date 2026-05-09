@@ -3,7 +3,14 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as http from 'node:http';
 import * as vscode from 'vscode';
-import type { DaemonHealth, DaemonWorkspaces } from './types.js';
+import type {
+  DaemonHealth,
+  DaemonWorkspace,
+  DaemonWorkspaces,
+  FileSyncStatus,
+  WorkspaceSyncProgress,
+  WorkspaceSyncStatus,
+} from './types.js';
 
 const DEFAULT_TIMEOUT_MS = 3000;
 
@@ -24,9 +31,19 @@ export class DaemonUnavailableError extends Error {
 }
 
 /**
- * Thin HTTP client for the local Diversion daemon. The daemon listens on a
- * loopback port published in `~/.diversion/.port`; the only endpoints we rely
- * on (verified against dv v0.9.895) are `/health` and `/workspaces`.
+ * HTTP client for the local Diversion sync agent (the AgentAPI surface).
+ * The agent listens on a loopback port published in `~/.diversion/.port`;
+ * the endpoints used here are documented in the official AgentAPI OpenAPI
+ * spec that ships with Diversion's Unreal plugin, and let us avoid
+ * spawning the `dv` CLI for hot-path operations:
+ *
+ *   - `/health` — liveness probe
+ *   - `/workspaces` — full registry (one request, all workspaces)
+ *   - `/workspace?abs_path=` — single-workspace lookup by absolute path
+ *   - `/repo/{R}/workspace/{W}/sync` GET — sync status (complete/paused)
+ *   - `/repo/{R}/workspace/{W}/sync` POST — wake the agent for a re-scan
+ *   - `/repo/{R}/workspace/{W}/sync/progress` — bytes/queue/action live state
+ *   - `/repo/{R}/workspace/{W}/files/status?Paths=` — per-file sync state
  */
 export class DaemonClient {
   private readonly home: string;
@@ -46,6 +63,83 @@ export class DaemonClient {
 
   async workspaces(): Promise<DaemonWorkspaces> {
     return this.getJson<DaemonWorkspaces>('/workspaces');
+  }
+
+  /**
+   * Direct lookup of the workspace covering a given absolute path —
+   * faster than fetching the full registry and walking it client-side.
+   * The agent returns a `{ <workspaceId>: WorkspaceConfiguration }` map,
+   * normally a single entry. Returns `undefined` if no workspace
+   * matches.
+   */
+  async workspaceByPath(absPath: string): Promise<DaemonWorkspace | undefined> {
+    const url = `/workspace?abs_path=${encodeURIComponent(absPath)}`;
+    let map: DaemonWorkspaces;
+    try {
+      map = await this.getJson<DaemonWorkspaces>(url);
+    } catch (err) {
+      // The agent answers 4xx for paths it doesn't recognise. We treat
+      // that as "no workspace here" rather than propagating an error,
+      // since callers are doing exploratory lookups against arbitrary
+      // workspace folders.
+      if (err instanceof DaemonUnavailableError && /HTTP 4/.test(err.message)) {
+        return undefined;
+      }
+      throw err;
+    }
+    for (const ws of Object.values(map)) return ws;
+    return undefined;
+  }
+
+  /**
+   * Coarse sync state for a workspace (complete / paused). Use this
+   * instead of inferring from `dv status` text — the agent already
+   * tracks it natively.
+   */
+  async syncStatus(repoId: string, workspaceId: string): Promise<WorkspaceSyncStatus> {
+    return this.getJson<WorkspaceSyncStatus>(
+      `/repo/${encodeURIComponent(repoId)}/workspace/${encodeURIComponent(workspaceId)}/sync`,
+    );
+  }
+
+  /**
+   * Detailed sync activity — bytes transferred per direction, queue
+   * size, current action, blob-transfer state. Polled while a sync is
+   * in flight to drive progress UI.
+   */
+  async syncProgress(repoId: string, workspaceId: string): Promise<WorkspaceSyncProgress> {
+    return this.getJson<WorkspaceSyncProgress>(
+      `/repo/${encodeURIComponent(repoId)}/workspace/${encodeURIComponent(workspaceId)}/sync/progress`,
+    );
+  }
+
+  /**
+   * Wake the agent to re-scan and sync NOW. The agent normally
+   * filesystem-watches on its own, but in cases where we *know* a
+   * change just landed (e.g. right after a commit) calling this
+   * shortens the time before the agent picks it up — without the
+   * subprocess cost of `dv update`.
+   */
+  async notifySyncRequired(repoId: string, workspaceId: string): Promise<void> {
+    await this.postNoBody(
+      `/repo/${encodeURIComponent(repoId)}/workspace/${encodeURIComponent(workspaceId)}/sync`,
+    );
+  }
+
+  /**
+   * Per-file sync status for up to 10 paths at a time (agent-side cap
+   * on the query string). Paths are repo-relative.
+   */
+  async fileSyncStatus(
+    repoId: string,
+    workspaceId: string,
+    paths: readonly string[],
+  ): Promise<FileSyncStatus[]> {
+    if (paths.length === 0) return [];
+    const qs = paths.map((p) => `Paths=${encodeURIComponent(p)}`).join('&');
+    return this.getJson<FileSyncStatus[]>(
+      `/repo/${encodeURIComponent(repoId)}/workspace/${encodeURIComponent(workspaceId)}/files/status?${qs}`,
+    );
   }
 
   /** Resolves the base URL. Callers can use this to log what's in use. */
@@ -106,6 +200,46 @@ export class DaemonClient {
           err,
         ));
       });
+    });
+  }
+
+  /**
+   * Fire-and-forget POST with no request/response body — used for the
+   * NotifySyncRequired endpoint. Treats any 2xx as success and any
+   * other status as a fault, but doesn't try to parse the body.
+   */
+  private async postNoBody(pathname: string): Promise<void> {
+    const base = await this.baseUrl();
+    const target = new URL(base + pathname);
+    return new Promise<void>((resolve, reject) => {
+      const req = http.request(
+        {
+          hostname: target.hostname,
+          port: target.port,
+          path: target.pathname + target.search,
+          method: 'POST',
+          timeout: this.timeoutMs,
+          headers: { 'content-length': '0' },
+        },
+        (res) => {
+          // Drain the body so the socket can be reused.
+          res.on('data', () => { /* discard */ });
+          res.on('end', () => {
+            const code = res.statusCode ?? 0;
+            if (code >= 200 && code < 300) resolve();
+            else reject(new DaemonUnavailableError(`${pathname} → HTTP ${code}`));
+          });
+        },
+      );
+      req.on('timeout', () => req.destroy(new Error(`timeout after ${this.timeoutMs}ms`)));
+      req.on('error', (err) => {
+        this.cachedBaseUrl = undefined;
+        reject(new DaemonUnavailableError(
+          `Daemon request to ${pathname} failed: ${err.message}`,
+          err,
+        ));
+      });
+      req.end();
     });
   }
 }

@@ -391,7 +391,15 @@ async function scanWorkspaceFolders(): Promise<void> {
 function updateStatusBar(): void {
   if (!statusBar) return;
   const provider = activeProvider();
-  statusBar.update(provider?.repo);
+  if (!provider) {
+    statusBar.update(undefined);
+    return;
+  }
+  // AgentAPI sync state is best-effort; if the call fails the bar
+  // still renders, just without the spinner / paused indicator.
+  void provider.repo.syncStatus().then((sync) => {
+    if (activeProvider() === provider) statusBar?.update(provider.repo, sync);
+  });
 }
 
 function activeProvider(): DiversionScmProvider | undefined {
@@ -905,6 +913,10 @@ async function commitCommand(sourceControl?: vscode.SourceControl): Promise<void
     );
     provider.clearStaged();
     provider.sourceControl.inputBox.value = '';
+    // Wake the agent immediately — the daemon's filesystem watcher
+    // would notice the new commit on its own, but a direct nudge
+    // shortens the time before /sync reports the new state.
+    void provider.repo.notifySyncRequired();
     await waitForNewCommitId(provider, beforeCommitId);
     await provider.refresh();
     updateStatusBar();
@@ -1090,6 +1102,7 @@ async function commitSelectedCommand(...resources: vscode.SourceControlResourceS
       async () => provider.repo.commit(message, paths),
     );
     provider.sourceControl.inputBox.value = '';
+    void provider.repo.notifySyncRequired();
     await waitForNewCommitId(provider, beforeCommitId);
     await provider.refresh();
     updateStatusBar();
