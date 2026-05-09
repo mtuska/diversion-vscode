@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { Logger } from './util/log.js';
 import { DaemonClient, DaemonUnavailableError } from './diversion/daemon.js';
-import { detectRepo } from './diversion/detect.js';
+import { detectRepo, findDiversionRoot } from './diversion/detect.js';
 import { Repo } from './diversion/repo.js';
 import { readSettings } from './diversion/settings.js';
 import { DiversionScmProvider } from './scm/provider.js';
@@ -252,7 +252,18 @@ async function scanWorkspaceFolders(): Promise<void> {
       continue;
     }
     if (!id) {
-      log.debug(`  ↳ no .diversion/ ancestor for ${folderPath}`);
+      // Surface one-line diagnostics at info level: most "extension didn't
+      // activate" reports come down to the .diversion ancestor walk
+      // failing, so the log should make it obvious how far we got.
+      const walkRoot = await findDiversionRoot(folderPath);
+      if (walkRoot) {
+        log.warn(
+          `  ↳ found .diversion at ${walkRoot} but daemon registry didn't match — ` +
+          `path-comparison or daemon-not-running issue`,
+        );
+      } else {
+        log.warn(`  ↳ no .diversion/ ancestor walking up from ${folderPath}`);
+      }
       continue;
     }
 

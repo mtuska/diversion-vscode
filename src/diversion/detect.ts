@@ -1,5 +1,6 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { pathEquals } from '../util/path.js';
 import type { DaemonClient } from './daemon.js';
 import type { DaemonWorkspace, RepoIdentity } from './types.js';
 
@@ -37,8 +38,11 @@ export async function findDiversionRoot(startDir: string): Promise<string | unde
  * Cross-reference a workspace folder path against the daemon's workspace
  * registry. Returns the matching DaemonWorkspace if any.
  *
- * Both sides are canonicalized via `fs.realpath` to handle symlinks
- * (e.g. /home → /var/home on Fedora Atomic).
+ * Both sides are canonicalised via `fs.realpath` to handle symlinks
+ * (e.g. /home → /var/home on Fedora Atomic), and compared via `pathEquals`
+ * so Windows case-insensitivity and forward/back-slash mixing don't cause
+ * false negatives (the daemon's stored path can disagree with what
+ * `realpath` returns on either axis).
  */
 export async function findRegisteredWorkspace(
   daemon: DaemonClient,
@@ -47,7 +51,7 @@ export async function findRegisteredWorkspace(
   const workspaces = await daemon.workspaces();
   const target = await canonicalize(workspaceRoot);
   for (const ws of Object.values(workspaces)) {
-    if ((await canonicalize(ws.Path)) === target) return ws;
+    if (pathEquals(await canonicalize(ws.Path), target)) return ws;
   }
   return undefined;
 }
