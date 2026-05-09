@@ -213,7 +213,7 @@ async function scanWorkspaceFolders(): Promise<void> {
       }
 
       const repo = new Repo(daemon, id, settings.dvPath, log);
-      const provider = new DiversionScmProvider(repo, log, quickDiff);
+      const provider = new DiversionScmProvider(repo, log, activationContext!.workspaceState, quickDiff);
       providers.set(fsPath, provider);
       log.info(`Registered SCM provider for ${id.repoName} on ${id.branchName || '<unknown branch>'} (${id.commitId || '<no commit>'}) at ${fsPath}`);
 

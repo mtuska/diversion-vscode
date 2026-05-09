@@ -73,21 +73,29 @@ export class Blame implements vscode.Disposable {
       editor.setDecorations(this.decoration, []);
       return;
     }
+    // Render the metadata only on the first line of each commit block —
+    // continuation lines get a hover-only decoration so the editor stays
+    // legible. A "block" is a contiguous run of lines that share commit ID.
     const decorations: vscode.DecorationOptions[] = [];
+    let prevCommit: string | undefined = '<none>';
     for (const a of annotations) {
       const lineIdx = a.lineNumber - 1;
       if (lineIdx < 0 || lineIdx >= editor.document.lineCount) continue;
       const range = editor.document.lineAt(lineIdx).range;
-      const text = a.uncommitted
-        ? '⏵ uncommitted'
-        : `⏵ ${a.author ?? '?'}${a.date ? ` · ${a.date}` : ''}${a.commitId ? ` · ${a.commitId}` : ''}`;
-      decorations.push({
+      const isFirstOfBlock = a.commitId !== prevCommit;
+      prevCommit = a.commitId;
+
+      const decoration: vscode.DecorationOptions = {
         range,
-        renderOptions: {
-          after: { contentText: text },
-        },
         hoverMessage: hoverFor(a),
-      });
+      };
+      if (isFirstOfBlock) {
+        const text = a.uncommitted
+          ? '⏵ uncommitted'
+          : `⏵ ${a.author ?? '?'}${a.date ? ` · ${a.date}` : ''}${a.commitId ? ` · ${a.commitId}` : ''}`;
+        decoration.renderOptions = { after: { contentText: text } };
+      }
+      decorations.push(decoration);
     }
     // Make sure we apply to the same editor that's still active.
     const stillActive = vscode.window.activeTextEditor;

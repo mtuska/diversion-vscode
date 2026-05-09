@@ -251,28 +251,7 @@
           "when": "scmProvider == diversion",
           "group": "navigation"
         },
-        {
-          "command": "diversion.stage",
-          "when": "scmProvider == diversion && (scmResourceGroup == changes || scmResourceGroup == new)",
-          "group": "1_modification@1"
-        },
-        {
-          "command": "diversion.unstage",
-          "when": "scmProvider == diversion && scmResourceGroup == staged",
-          "group": "1_modification@1"
-        },
-        {
-          "command": "diversion.commitSelected",
-          "when": "scmProvider == diversion && scmResourceGroup != conflicts",
-          "group": "1_modification@2"
-        },
-        {
-          "command": "diversion.discardChanges",
-          "when": "scmProvider == diversion && scmResourceGroup != conflicts",
-          "group": "1_modification@3"
-        }
-      ],
-      "scm/resourceState/inline": [
+
         {
           "command": "diversion.openFile",
           "when": "scmProvider == diversion",
@@ -297,6 +276,27 @@
           "command": "diversion.markResolved",
           "when": "scmProvider == diversion && scmResourceState == conflict",
           "group": "inline@3"
+        },
+
+        {
+          "command": "diversion.stage",
+          "when": "scmProvider == diversion && (scmResourceGroup == changes || scmResourceGroup == new)",
+          "group": "1_modification@1"
+        },
+        {
+          "command": "diversion.unstage",
+          "when": "scmProvider == diversion && scmResourceGroup == staged",
+          "group": "1_modification@1"
+        },
+        {
+          "command": "diversion.commitSelected",
+          "when": "scmProvider == diversion && scmResourceGroup != conflicts",
+          "group": "1_modification@2"
+        },
+        {
+          "command": "diversion.discardChanges",
+          "when": "scmProvider == diversion && scmResourceGroup != conflicts",
+          "group": "1_modification@3"
         }
       ],
       "scm/resourceGroup/context": [

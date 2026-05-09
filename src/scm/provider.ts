@@ -21,10 +21,12 @@ export class DiversionScmProvider implements vscode.Disposable {
   /**
    * Workspace-relative paths the user has explicitly "staged" for the next
    * commit. Diversion has no real staging area, so this is purely a UI
-   * concept maintained in memory: when commit fires with this set non-empty,
-   * we pass `dv commit <paths> -m`; otherwise we use `dv commit -a -m`.
+   * concept maintained per-workspace and persisted via `workspaceState`.
+   * When commit fires with this set non-empty, we pass `dv commit <paths> -m`;
+   * otherwise we use `dv commit -a -m`.
    */
   private readonly stagedPaths = new Set<string>();
+  private readonly storageKey: string;
 
   private refreshTimer: NodeJS.Timeout | undefined;
   private inFlight: Promise<void> | undefined;
@@ -33,8 +35,16 @@ export class DiversionScmProvider implements vscode.Disposable {
   constructor(
     readonly repo: Repo,
     private readonly logger: Logger,
+    private readonly storage: vscode.Memento,
     quickDiffProvider?: vscode.QuickDiffProvider,
   ) {
+    this.storageKey = `diversion.staged.${repo.info.workspaceId}`;
+    const persisted = this.storage.get<string[]>(this.storageKey, []);
+    for (const p of persisted) this.stagedPaths.add(p);
+    if (persisted.length > 0) {
+      this.logger.info(`[scm] restored ${persisted.length} staged path(s) from workspaceState`);
+    }
+
     this.sc = vscode.scm.createSourceControl(
       PROVIDER_ID,
       `Diversion · ${repo.info.repoName || path.basename(repo.root)}`,
@@ -101,11 +111,13 @@ export class DiversionScmProvider implements vscode.Disposable {
       ]);
 
       // Drop any staged paths that no longer correspond to a change (e.g. the
-      // user reverted the file or it was committed elsewhere).
+      // user reverted the file or it was committed elsewhere). Persist if changed.
       const livePaths = new Set(state.changes.map((c) => c.path));
+      let stagingChanged = false;
       for (const p of [...this.stagedPaths]) {
-        if (!livePaths.has(p)) this.stagedPaths.delete(p);
+        if (!livePaths.has(p)) { this.stagedPaths.delete(p); stagingChanged = true; }
       }
+      if (stagingChanged) this.persistStaged();
 
       const staged: vscode.SourceControlResourceState[] = [];
       const modifiedDeleted: vscode.SourceControlResourceState[] = [];
@@ -166,30 +178,36 @@ export class DiversionScmProvider implements vscode.Disposable {
   stage(paths: readonly string[]): void {
     let added = false;
     for (const p of paths) if (!this.stagedPaths.has(p)) { this.stagedPaths.add(p); added = true; }
-    if (added) this.scheduleRefresh(0);
+    if (added) { this.persistStaged(); this.scheduleRefresh(0); }
   }
 
   unstage(paths: readonly string[]): void {
     let removed = false;
     for (const p of paths) if (this.stagedPaths.delete(p)) removed = true;
-    if (removed) this.scheduleRefresh(0);
+    if (removed) { this.persistStaged(); this.scheduleRefresh(0); }
   }
 
   stageAll(): void {
     let added = false;
     for (const p of this.allChangedPaths()) if (!this.stagedPaths.has(p)) { this.stagedPaths.add(p); added = true; }
-    if (added) this.scheduleRefresh(0);
+    if (added) { this.persistStaged(); this.scheduleRefresh(0); }
   }
 
   unstageAll(): void {
     if (this.stagedPaths.size === 0) return;
     this.stagedPaths.clear();
+    this.persistStaged();
     this.scheduleRefresh(0);
   }
 
   /** Clear staging state — call after a successful commit. */
   clearStaged(): void {
     this.stagedPaths.clear();
+    this.persistStaged();
+  }
+
+  private persistStaged(): void {
+    void this.storage.update(this.storageKey, [...this.stagedPaths]);
   }
 
   private relPath(uri: vscode.Uri): string {
