@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { Logger } from './util/log.js';
 import { DaemonClient, DaemonUnavailableError } from './diversion/daemon.js';
-import { detectRepo } from './diversion/detect.js';
+import { detectRepo, findDiversionRoot } from './diversion/detect.js';
 import { Repo } from './diversion/repo.js';
 import { readSettings } from './diversion/settings.js';
 import { DiversionScmProvider } from './scm/provider.js';
@@ -34,11 +34,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   activationContext = context;
   logger = new Logger();
   const log = logger;
-  // Surface the channel immediately so users see *something* even if scan fails.
-  log.show();
   const folders = vscode.workspace.workspaceFolders ?? [];
   log.info(`Diversion extension activating; ${folders.length} workspace folder(s):`);
   for (const f of folders) log.info(`  • ${f.uri.fsPath}`);
+  // Only auto-show the output channel when at least one folder appears to
+  // be Diversion-tracked (cheap fs.stat walk). Activation now fires on
+  // onStartupFinished too — opening a subdirectory of a Diversion repo
+  // works because we walk up to find `.diversion/` — but we don't want
+  // every VS Code window to surface our output channel uninvited.
+  if (await anyFolderInsideDiversionRepo(folders, log)) {
+    log.show();
+  }
 
   statusBar = new StatusBar(log);
   const repoLookup = {
@@ -165,6 +171,24 @@ export function deactivate(): void {
   quickDiff?.dispose();
 }
 
+/**
+ * Cheap pre-check before we run the full daemon health-check + scan: stat
+ * `.diversion` walking up from each folder. Returns true if any folder is
+ * inside a Diversion repo. Used to suppress the output channel in
+ * unrelated VS Code windows now that activation fires on every startup.
+ */
+async function anyFolderInsideDiversionRepo(
+  folders: readonly vscode.WorkspaceFolder[],
+  _log: Logger,
+): Promise<boolean> {
+  for (const folder of folders) {
+    if (folder.uri.scheme !== 'file') continue;
+    const root = await findDiversionRoot(folder.uri.fsPath);
+    if (root) return true;
+  }
+  return false;
+}
+
 async function healthCheck(log: Logger): Promise<void> {
   const settings = readSettings();
   const daemon = new DaemonClient(settings.daemonUrl ? { baseUrl: settings.daemonUrl } : {});
@@ -222,47 +246,67 @@ async function scanWorkspaceFolders(): Promise<void> {
   const settings = readSettings();
   const daemon = new DaemonClient(settings.daemonUrl ? { baseUrl: settings.daemonUrl } : {});
   const folders = vscode.workspace.workspaceFolders ?? [];
-  const seen = new Set<string>();
+
+  // The providers map is keyed by the actual *repo root* (the directory
+  // that contains `.diversion/`), not by the workspace folder path. This
+  // matters when the user opens a sub-directory of a repo: detectRepo
+  // walks up to find the marker, and we want to register exactly one
+  // provider per repo even if the user has multiple folders of the same
+  // repo open simultaneously.
+  const seenRoots = new Set<string>();
 
   for (const folder of folders) {
     if (folder.uri.scheme !== 'file') continue;
-    const fsPath = folder.uri.fsPath;
-    seen.add(fsPath);
-    if (providers.has(fsPath)) continue;
+    const folderPath = folder.uri.fsPath;
 
+    let id;
     try {
-      log.info(`Scanning ${fsPath} for a Diversion workspace…`);
-      const id = await detectRepo(daemon, fsPath);
-      if (!id) {
-        log.info(`  ↳ no .diversion/ marker (or no daemon match) under ${fsPath}`);
-        continue;
-      }
+      id = await detectRepo(daemon, folderPath);
+    } catch (err) {
+      log.error(`Detection failed for ${folderPath}`, err);
+      continue;
+    }
+    if (!id) {
+      log.debug(`  ↳ no .diversion/ ancestor for ${folderPath}`);
+      continue;
+    }
 
+    const root = id.workspacePath;
+    seenRoots.add(root);
+
+    if (!providers.has(root)) {
       const repo = new Repo(daemon, id, settings.dvPath, log);
       const provider = new DiversionScmProvider(
         repo, log, activationContext!.workspaceState, quickDiff, commitContent,
       );
-      providers.set(fsPath, provider);
-      log.info(`Registered SCM provider for ${id.repoName} on ${id.branchName || '<unknown branch>'} (${id.commitId || '<no commit>'}) at ${fsPath}`);
-
+      providers.set(root, provider);
+      const note = folderPath === root ? '' : ` [open folder: ${folderPath}]`;
+      log.info(
+        `Registered SCM provider for ${id.repoName} on ${id.branchName || '<unknown>'} ` +
+        `(${id.commitId || '<no commit>'}) at ${root}${note}`,
+      );
       provider.scheduleRefresh(0);
-      const watcherDisposable = watchWorkspace(fsPath, (uri) => {
-        provider.scheduleRefresh(settings.refreshDebounceMs);
-        // Lock state can change as a side-effect of edits (auto-lock on
-        // edit) — bust the cache and let decorations refresh too.
-        void lockDecorations?.refresh();
-        // Working file changed → cached commit-content is stale because
-        // we anchor reverse-apply on the working contents.
-        commitContent?.invalidate(uri.fsPath);
-      });
-      activationContext?.subscriptions.push(watcherDisposable);
-    } catch (err) {
-      log.error(`Detection/registration failed for ${fsPath}`, err);
     }
+
+    // Each open folder gets its own file-system watcher so VS Code's
+    // workspace-folder-scoped FS event delivery still works for sub-dir
+    // opens. They all feed the same provider — refresh fires regardless
+    // of which folder the change came from.
+    const provider = providers.get(root)!;
+    const watcherDisposable = watchWorkspace(folderPath, (uri) => {
+      provider.scheduleRefresh(settings.refreshDebounceMs);
+      // Lock state can change as a side-effect of edits (auto-lock on
+      // edit) — bust the cache and let decorations refresh too.
+      void lockDecorations?.refresh();
+      // Working file changed → cached commit-content is stale because
+      // we anchor reverse-apply on the working contents.
+      commitContent?.invalidate(uri.fsPath);
+    });
+    activationContext?.subscriptions.push(watcherDisposable);
   }
 
   for (const [key, provider] of [...providers.entries()]) {
-    if (!seen.has(key)) {
+    if (!seenRoots.has(key)) {
       provider.dispose();
       providers.delete(key);
       log.info(`Removed SCM provider for ${key}`);

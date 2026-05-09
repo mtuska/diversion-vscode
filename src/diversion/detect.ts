@@ -7,6 +7,13 @@ import type { DaemonWorkspace, RepoIdentity } from './types.js';
  * Walk up from `startDir` looking for a `.diversion` directory. Returns the
  * directory containing it, or undefined if no marker is found before the
  * filesystem root.
+ *
+ * This is the function that lets us activate when a user opens a *sub*-
+ * directory of a Diversion repo (e.g. `code Prototypes/Documentation`):
+ * VS Code's `workspaceContains:.diversion` activation event matches only
+ * children of the open folder, never ancestors, so the activate() function
+ * uses this walk to find the actual repo root regardless of how the user
+ * launched VS Code.
  */
 export async function findDiversionRoot(startDir: string): Promise<string | undefined> {
   let current = path.resolve(startDir);

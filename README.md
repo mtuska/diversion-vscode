@@ -5,30 +5,18 @@
 
 Source-control integration for [Diversion](https://www.diversion.dev) — registers Diversion as a first-class SCM provider so you can commit, branch, diff, switch, and merge from inside VS Code.
 
-> **Status: v0.1 (early).** Tested against `dv v0.9.x`. Coexists peacefully with the built-in Git provider; activates only in folders managed by Diversion.
+> **Status: v0.3.x.** Tested against `dv v0.9.x` on VS Code 1.93+. Coexists peacefully with the built-in Git provider; activates whenever the open folder lives inside (or is) a Diversion-managed workspace.
 
 ## Requirements
 
 - The `dv` CLI on your `PATH` (or set `diversion.path`). The extension
   defaults to `dv` on macOS / Linux and `dv.exe` on Windows.
-- A workspace cloned with `dv clone` or initialized with `dv init` (the
-  extension activates on the presence of a `.diversion/` directory).
+- A workspace cloned with `dv clone` or initialized with `dv init`. The
+  extension activates whenever the open folder is inside a Diversion repo
+  — opening a sub-directory of a `.diversion/`-marked tree works too; we
+  walk up to find the actual repo root.
 - The Diversion daemon running locally (it is when `dv status` works).
 - VS Code 1.93 or newer.
-
-### Optional: enable the Source Control Graph view
-
-Diversion populates VS Code's built-in **Source Control Graph** view via
-the `scmHistoryProvider` proposed API. To use it, start VS Code with the
-proposed API enabled for this extension:
-
-```bash
-code --enable-proposed-api mtuska.diversion-vscode
-```
-
-VS Code Insiders enables proposed APIs automatically. If the flag isn't
-set the rest of the extension still works — you just won't see the graph
-populate until the proposal stabilises and the flag becomes unnecessary.
 
 ## Installing
 
@@ -46,14 +34,6 @@ code --install-extension diversion-vscode-<version>.vsix
 # Windows (PowerShell or cmd)
 code --install-extension diversion-vscode-<version>.vsix
 ```
-
-To enable the SCM Graph view (one-time per install):
-
-```bash
-code --enable-proposed-api mtuska.diversion-vscode
-```
-
-(Or use VS Code Insiders, which enables proposed APIs automatically.)
 
 ### Option 2: build from source
 
@@ -104,31 +84,65 @@ If you hit a platform-specific issue, file it with the contents of the
 Performance Trace` command's output is also useful — it tells us whether
 the daemon and `dv` itself are responding the way we expect.
 
-## What this version does
+## Features
 
-- Detects Diversion workspaces automatically (cross-checks the `.diversion/` marker against the local daemon's workspace registry).
-- Registers a **Diversion** Source Control provider per workspace folder.
-- Two resource groups: **Changes** (modified / deleted / renamed) and **New** (untracked).
-- Auto-refreshes on file save, create, delete (debounced).
-- Commit input box → `dv commit -a -m "<msg>"`.
-- Inline diff vs. base via VS Code's quick-diff — implemented by parsing `dv diff <path>` and reverse-applying it (no temp files).
-- Click any modified file in the SCM panel for a side-by-side diff against the base commit.
-- Status bar item showing the current branch and sync state. Click → switch branch.
-- **Switch branch** quick-pick with explicit handling for uncommitted changes (take / shelve / discard).
-- **Create branch** prompt (auto-checks-out).
-- **Merge** quick-pick (current ← chosen branch).
-- **Discard** (per-file or all) with confirmation.
-- **View History** in a webview showing `dv log -n 50` rendered with VS Code theme colors.
-- **Open in Web UI** (`dv view`).
+**Source Control panel**
+- One **Diversion** provider per repo, keyed by the actual `.diversion/`
+  ancestor — opening a sub-directory still registers correctly.
+- Resource groups: **Conflicts**, **Staged Changes**, **Changes**, **New**.
+  Conflicts (`*.dv-conflict.*` sidecars) surface automatically.
+- Inline +/− buttons on every resource (stage / unstage), plus context-menu
+  Stage / Unstage / Commit Selected / Discard. Multi-select works.
+- Staging is persisted per-workspace via `workspaceState`, so it survives
+  reloads.
+- Commit picks the staged paths if any are staged, otherwise commits all
+  (`dv commit <paths> -m` / `dv commit -a -m`).
+- QuickDiff (gutter + side-by-side) via reverse-applied unified diff. Binary
+  files skip the diff path and open directly.
 
-## What this version does *not* do (yet)
+**Repo header (per-repo `…` menu)**
+- Branch pill (`$(git-branch) <name>`) — click to switch branches.
+- Ellipsis button next to it opens a categorised quick-pick: Actions /
+  Branch / Sync / Locks / View. Right-click on the repo row gets you the
+  same menu.
+- Sync verbs (no push/pull — Diversion auto-syncs commits): Update Workspace,
+  Pause Sync, Resume Sync, Verify Repository.
 
-- Hard-lock UI for binary assets (`dv lock`). Coming in v0.2.
-- Shelves UI (`dv shelf`). Coming in v0.2.
-- A "Conflicts" group for `.dv-conflict.<ext>` sidecar files. Coming in v0.2.
-- Selective sync editor (`dv preferences`).
-- Workspace switcher.
-- There is **no** "Push" or "Pull" — Diversion auto-syncs commits. This is by design, not an oversight.
+**History**
+- VS Code's built-in **Source Control Graph** populates with branches,
+  commit timestamps, parents, and per-commit file lists. Clicking a file
+  opens a real side-by-side diff for that commit (via a `dv-commit:`
+  content scheme).
+- **View History** webview as a textual fallback.
+- **Cherry-pick / Revert / Restore-to-commit** commands.
+
+**Game-dev specific**
+- **Hard locks** (`dv lock`): 🔒 explorer badges via FileDecorationProvider,
+  Lock / Unlock / List Locks commands. *Server-side gated to Studio /
+  Enterprise tiers.*
+- **Sync conflict resolution** for `*.dv-conflict.*` sidecars (a Diversion
+  concept distinct from merge conflicts).
+- **Shelves** tree view (`dv shelf`): create / apply / delete / rename plus
+  Shelve-and-switch-branch.
+- **Inline blame** (`dv annotate`) — `Diversion: Toggle Blame`. Block-grouped
+  GitLens-style.
+
+**Performance**
+- Batched per-commit prefetch when the SCM Graph expands a commit (one
+  `dv diff --base <commit>` call instead of N).
+- Persistent on-disk cache for commit content (50 MB, mtime LRU, segmented
+  by dv version) — re-opening the same commit's diffs is ~1 ms after the
+  first session.
+- `Diversion: Run Performance Trace` runs a known battery and writes
+  per-step timings to the output channel, useful for triage.
+
+**Not implemented yet**
+- Selective sync editor (`dv preferences sync_paths_rules`).
+- Workspace switcher (multiple workspaces of the same repo).
+- Tag UI (list / create / checkout) — tags exist in dv but aren't surfaced.
+- Multi-lane DAG layout in the graph (currently linear-with-merge-markers).
+- There is **no** Push or Pull — Diversion auto-syncs commits. This is by
+  design, not an oversight.
 
 ## Building
 
@@ -154,10 +168,11 @@ node scripts/smoke-detect.mjs ~/Diversion/MyRepo
 
 | Setting | Default | Description |
 |---|---|---|
-| `diversion.path` | `""` | Path to the `dv` binary. Empty uses `PATH`. |
+| `diversion.path` | `""` | Path to the `dv` binary. Empty uses platform default (`dv` on POSIX, `dv.exe` on Windows). |
 | `diversion.daemonUrl` | `""` | Override the daemon URL. Empty discovers from `~/.diversion/.port`. |
 | `diversion.refresh.debounceMs` | `300` | Debounce window (ms) for auto-refresh after file changes. |
 | `diversion.log.level` | `"info"` | Output channel verbosity (`off`/`error`/`warn`/`info`/`debug`). |
+| `diversion.binaryExtensions` | `[]` | Extra file extensions to treat as binary (skip side-by-side diff, open directly). |
 
 ## Architecture
 
