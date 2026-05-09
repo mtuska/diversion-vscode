@@ -121,8 +121,12 @@ export class DiversionScmProvider implements vscode.Disposable {
   }
 
   /**
-   * Populate the SCM panel header buttons: branch indicator + sync state.
-   * Mirrors the git extension's "branch" pill that lives in the SCM title.
+   * Populate the SCM panel header buttons that sit on the repo row next to
+   * the title. Both buttons are visible at all times — the branch pill and
+   * an ellipsis that opens the full action quick-pick.
+   *
+   * `statusBarCommands` is the only API surface for visible buttons here;
+   * `scm/sourceControl` menu contributions render only on right-click.
    */
   private updateTitleButtons(): void {
     const id = this.repo.info;
@@ -140,6 +144,11 @@ export class DiversionScmProvider implements vscode.Disposable {
           id.paused ? 'Sync: paused' : 'Sync: active',
           'Click to switch branch',
         ].join('\n'),
+      },
+      {
+        command: 'diversion.moreActions',
+        title: '$(ellipsis)',
+        tooltip: 'Diversion: more actions',
       },
     ];
   }
