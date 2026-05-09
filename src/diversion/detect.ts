@@ -35,6 +35,57 @@ export async function findDiversionRoot(startDir: string): Promise<string | unde
 }
 
 /**
+ * Walk *down* from `startDir` looking for nested `.diversion` folders, up
+ * to `maxDepth` directory levels deep. Returns the absolute paths of
+ * directories that contain a `.diversion/` marker, in discovery order.
+ *
+ * Used for "open a parent folder containing several Diversion repos and
+ * have each repo register independently" — same shape as the built-in
+ * git extension's `git.repositoryScanMaxDepth` behaviour.
+ *
+ * Depth semantics mirror git's: depth 0 disables the scan, depth 1 looks
+ * one level under `startDir` (immediate children), depth 2 looks two
+ * levels, and so on. Once a repo is found we stop descending into that
+ * subtree — nested-inside-nested is rare and registering both would be
+ * confusing.
+ *
+ * Skips: dotfile directories (`.git`, `.vscode`, etc.), `node_modules`,
+ * symlinked directories (loop hazard), and unreadable directories.
+ */
+export async function findNestedDiversionRoots(
+  startDir: string,
+  maxDepth: number,
+): Promise<string[]> {
+  if (maxDepth <= 0) return [];
+  const found: string[] = [];
+
+  async function walk(dir: string, depthLeft: number): Promise<void> {
+    let entries;
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    if (entries.some((e) => e.name === '.diversion' && e.isDirectory())) {
+      found.push(dir);
+      return;
+    }
+
+    if (depthLeft <= 0) return;
+
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+      if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+      await walk(path.join(dir, entry.name), depthLeft - 1);
+    }
+  }
+
+  await walk(path.resolve(startDir), maxDepth);
+  return found;
+}
+
+/**
  * Cross-reference a workspace folder path against the daemon's workspace
  * registry. Returns the matching DaemonWorkspace if any.
  *

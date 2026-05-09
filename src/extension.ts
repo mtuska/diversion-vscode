@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { Logger } from './util/log.js';
 import { DaemonClient, DaemonUnavailableError } from './diversion/daemon.js';
-import { detectRepo, findDiversionRoot } from './diversion/detect.js';
+import { detectRepo, findDiversionRoot, findNestedDiversionRoots } from './diversion/detect.js';
 import { Repo } from './diversion/repo.js';
 import { readSettings } from './diversion/settings.js';
 import { setDvConcurrencyLimit } from './diversion/cli.js';
@@ -161,6 +161,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         setDvConcurrencyLimit(next);
         log.info(`[settings] dv concurrency limit → ${next}`);
       }
+      if (e.affectsConfiguration('diversion.repositoryScanMaxDepth')) {
+        // Re-scan to pick up nested repos newly within the depth budget.
+        // (We don't *un-register* repos when the depth shrinks — that
+        // would tear down providers mid-session; a window reload covers
+        // the rare "I want fewer repos showing up" direction.)
+        void scanWorkspaceFolders();
+      }
     }),
     vscode.window.onDidChangeWindowState((s) => {
       if (s.focused) for (const p of providers.values()) p.scheduleRefresh(50);
@@ -258,35 +265,57 @@ async function scanWorkspaceFolders(): Promise<void> {
     if (folder.uri.scheme !== 'file') continue;
     const folderPath = folder.uri.fsPath;
 
-    let id;
-    try {
-      id = await detectRepo(daemon, folderPath);
-    } catch (err) {
-      log.error(`Detection failed for ${folderPath}`, err);
-      continue;
-    }
-    if (!id) {
-      // Surface one-line diagnostics at info level: most "extension didn't
-      // activate" reports come down to the .diversion ancestor walk
-      // failing, so the log should make it obvious how far we got.
-      const walkRoot = await findDiversionRoot(folderPath);
-      if (walkRoot) {
-        log.warn(
-          `  ↳ found .diversion at ${walkRoot} but daemon registry didn't match — ` +
-          `path-comparison or daemon-not-running issue`,
-        );
-      } else {
-        log.warn(`  ↳ no .diversion/ ancestor walking up from ${folderPath}`);
+    // Detection candidates: the workspace folder itself (which `detectRepo`
+    // resolves via its upward `.diversion` walk) plus any nested repos
+    // discovered up to `repositoryScanMaxDepth` levels below it. The
+    // upward case handles "user opened a sub-folder of a repo"; the
+    // downward case handles "user opened a parent folder containing
+    // multiple sibling repos". Same shape as git's two-axis discovery.
+    const candidates: string[] = [folderPath];
+    if (settings.repositoryScanMaxDepth > 0) {
+      try {
+        const nested = await findNestedDiversionRoots(folderPath, settings.repositoryScanMaxDepth);
+        for (const r of nested) if (!candidates.includes(r)) candidates.push(r);
+      } catch (err) {
+        log.warn(`Nested repo scan failed for ${folderPath}: ${err}`);
       }
-      continue;
     }
 
-    const root = id.workspacePath;
-    const entry = foldersByRoot.get(root);
-    if (entry) {
-      if (!entry.folders.includes(folderPath)) entry.folders.push(folderPath);
-    } else {
-      foldersByRoot.set(root, { id, folders: [folderPath] });
+    let firstFailureLogged = false;
+    for (const candidate of candidates) {
+      let id;
+      try {
+        id = await detectRepo(daemon, candidate);
+      } catch (err) {
+        log.error(`Detection failed for ${candidate}`, err);
+        continue;
+      }
+      if (!id) {
+        // Only emit the diagnostic for the workspace folder itself —
+        // nested probes are best-effort and shouldn't spam warnings
+        // when a child directory turns out not to be a repo.
+        if (candidate === folderPath && !firstFailureLogged) {
+          firstFailureLogged = true;
+          const walkRoot = await findDiversionRoot(folderPath);
+          if (walkRoot) {
+            log.warn(
+              `  ↳ found .diversion at ${walkRoot} but daemon registry didn't match — ` +
+              `path-comparison or daemon-not-running issue`,
+            );
+          } else {
+            log.warn(`  ↳ no .diversion/ ancestor walking up from ${folderPath}`);
+          }
+        }
+        continue;
+      }
+
+      const root = id.workspacePath;
+      const entry = foldersByRoot.get(root);
+      if (entry) {
+        if (!entry.folders.includes(folderPath)) entry.folders.push(folderPath);
+      } else {
+        foldersByRoot.set(root, { id, folders: [folderPath] });
+      }
     }
   }
 
