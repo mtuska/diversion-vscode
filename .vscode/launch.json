@@ -8,7 +8,9 @@
       "args": [
         "--extensionDevelopmentPath=${workspaceFolder}"
       ],
-      "outFiles": ["${workspaceFolder}/out/**/*.js"],
+      "outFiles": [
+        "${workspaceFolder}/out/**/*.js"
+      ],
       "preLaunchTask": "npm: build"
     },
     {
@@ -19,18 +21,22 @@
         "--extensionDevelopmentPath=${workspaceFolder}",
         "${env:HOME}/Diversion/SampleRepo"
       ],
-      "outFiles": ["${workspaceFolder}/out/**/*.js"],
+      "outFiles": [
+        "${workspaceFolder}/out/**/*.js"
+      ],
       "preLaunchTask": "npm: build"
     },
     {
-      "name": "Run Extension on Prototypes",
+      "name": "Run Extension on SampleRepo-2",
       "type": "extensionHost",
       "request": "launch",
       "args": [
         "--extensionDevelopmentPath=${workspaceFolder}",
-        "${env:HOME}/Diversion/Prototypes"
+        "${env:HOME}/Diversion/SampleRepo2"
       ],
-      "outFiles": ["${workspaceFolder}/out/**/*.js"],
+      "outFiles": [
+        "${workspaceFolder}/out/**/*.js"
+      ],
       "preLaunchTask": "npm: build"
     }
   ]

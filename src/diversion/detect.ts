@@ -9,7 +9,7 @@ import type { DaemonWorkspace, RepoIdentity } from './types.js';
  * filesystem root.
  *
  * This is the function that lets us activate when a user opens a *sub*-
- * directory of a Diversion repo (e.g. `code Prototypes/Documentation`):
+ * directory of a Diversion repo (e.g. `code RepoRoot/Subdir`):
  * VS Code's `workspaceContains:.diversion` activation event matches only
  * children of the open folder, never ancestors, so the activate() function
  * uses this walk to find the actual repo root regardless of how the user

@@ -36,8 +36,8 @@ export class DiversionScmProvider implements vscode.Disposable {
    * Absolute filesystem paths of workspace folders the user has open that
    * resolve to this repo. When non-empty AND none of them equals the repo
    * root, SCM display is filtered to changes inside one of these folders —
-   * so opening `Prototypes/Documentation/` shows only `Documentation/*`
-   * changes even though the provider is rooted at `Prototypes/`. Empty (or
+   * so opening `RepoRoot/Subdir/` shows only `Documentation/*`
+   * changes even though the provider is rooted at `RepoRoot/`. Empty (or
    * containing the repo root) means "show all changes".
    */
   private openFolders: string[] = [];
