@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
 import { runDv, runDvOrThrow } from './cli.js';
+import { listFilesRecursive } from '../util/walk.js';
 import { parseStatus, type ParsedStatus } from './parsers/status.js';
 import { parseDiffNameStatus } from './parsers/diffNameStatus.js';
 import { parseBranchList, type BranchInfo } from './parsers/branch.js';
@@ -85,9 +87,39 @@ export class Repo {
     }
     // Strip `.dv-conflict*` sidecars from the change list — they aren't
     // actually tracked and they get their own dedicated group.
-    changes = sortChanges(changes.filter((c) => !/\.dv-conflict(?:-\d+)?(?:\.[^./\\]+)?$/.test(c.path)));
+    changes = changes.filter((c) => !/\.dv-conflict(?:-\d+)?(?:\.[^./\\]+)?$/.test(c.path));
+
+    // dv reports new directories as a single entry (e.g. `Plugins/Foo`).
+    // Expand each one to its constituent files so the SCM panel's list view
+    // shows files (matching git's UX). Tree view still works because VS Code
+    // derives the tree from the file paths themselves.
+    changes = await this.expandAddedDirectories(changes);
+    changes = sortChanges(changes);
 
     return { identity: this.identity, changes, status, conflicts };
+  }
+
+  private async expandAddedDirectories(changes: FileChange[]): Promise<FileChange[]> {
+    const out: FileChange[] = [];
+    for (const change of changes) {
+      if (change.kind !== 'added') {
+        out.push(change);
+        continue;
+      }
+      const abs = path.join(this.identity.workspacePath, change.path);
+      let stat: import('node:fs').Stats | undefined;
+      try { stat = await fs.stat(abs); } catch { /* path no longer present */ }
+      if (!stat?.isDirectory()) {
+        out.push(change);
+        continue;
+      }
+      const files = await listFilesRecursive(abs);
+      for (const file of files) {
+        const rel = path.relative(this.identity.workspacePath, file);
+        out.push({ kind: 'added', path: rel });
+      }
+    }
+    return out;
   }
 
   async commit(message: string, paths?: readonly string[]): Promise<void> {
