@@ -17,7 +17,7 @@ describe('parseAnnotation', () => {
       author: 'A. Sample',
       date: '2026-05-08',
       uncommitted: false,
-      content: '# CLAUDE.md — Sample Project Context',
+      content: '# Sample.md — Project Context',
     });
 
     // Continuation: same commit, line 2, blank content
@@ -43,7 +43,7 @@ describe('parseAnnotation', () => {
     const fresh = r.find((a) => a.lineNumber === 20);
     expect(fresh).toMatchObject({
       commitId: 'dv.commit.7',
-      author: 'A. Sample',
+      author: 'B. Sample',
       date: '2026-04-21',
       uncommitted: false,
     });

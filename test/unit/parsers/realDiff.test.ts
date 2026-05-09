@@ -25,11 +25,11 @@ describe('reverseApply against real dv overview.md fixture', () => {
     expect(base, 'reverseApply returned undefined — context lines did not match').toBeDefined();
     expect(base).not.toBe(working);
 
-    // Sanity: the base should contain the OLD SampleMesh line and not the
-    // new one; the working should be the inverse.
+    // Sanity: the working file has the post-edit row text; the reconstructed
+    // base should have the pre-edit baseline text instead.
     expect(working).toContain('TBD (likely Q4 2026 / Q1 2027)');
-    expect(working).not.toContain('Working POC; same-shard handoff');
-    expect(base).toContain('Working POC; same-shard handoff');
+    expect(working).not.toContain('original baseline row before the test edit');
+    expect(base).toContain('original baseline row before the test edit');
     expect(base).not.toContain('TBD (likely Q4 2026 / Q1 2027)');
   });
 });
