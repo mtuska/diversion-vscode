@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
 import type { ChangeKind } from '../diversion/types.js';
+import type { IgnoreManager } from '../util/ignore.js';
+import { isInsideOrEqual } from '../util/path.js';
 import type { Logger } from '../util/log.js';
 
 /**
@@ -26,8 +28,28 @@ export class ChangeDecorationsProvider implements vscode.FileDecorationProvider,
 
   /** Map of absolute fs path → change kind, scoped per repo root. */
   private byRepo = new Map<string, Map<string, ChangeKind>>();
+  /** Ignore matchers, scoped per repo root. */
+  private ignoresByRepo = new Map<string, IgnoreManager>();
 
   constructor(private readonly logger: Logger) {}
+
+  attachIgnoreManager(repoRoot: string, mgr: IgnoreManager): void {
+    this.ignoresByRepo.set(repoRoot, mgr);
+    // Force a refresh of every URI we currently know about, plus
+    // notify VS Code that any other URI under this repo may have
+    // changed. Callers typically follow up with a fire on a broader
+    // set; passing undefined invalidates everything as a fallback.
+    this._onDidChange.fire(undefined);
+  }
+
+  detachIgnoreManager(repoRoot: string): void {
+    if (this.ignoresByRepo.delete(repoRoot)) this._onDidChange.fire(undefined);
+  }
+
+  /** Re-fire decorations for everything; called after an ignore reload. */
+  refresh(): void {
+    this._onDidChange.fire(undefined);
+  }
 
   /**
    * Replace this repo's decoration state. Fires `onDidChangeFileDecorations`
@@ -71,14 +93,32 @@ export class ChangeDecorationsProvider implements vscode.FileDecorationProvider,
 
   provideFileDecoration(uri: vscode.Uri): vscode.FileDecoration | undefined {
     if (uri.scheme !== 'file') return undefined;
+    // Tracked changes win over "ignored": once a file has been added /
+    // modified / etc. dv treats it as part of the change set even if a
+    // later .dvignore pattern would have matched it.
     for (const map of this.byRepo.values()) {
       const kind = map.get(uri.fsPath);
       if (kind) return decorationFor(kind);
+    }
+    // Otherwise, gray-out files that any matching repo's ignore set covers.
+    for (const [root, mgr] of this.ignoresByRepo) {
+      if (!isInsideOrEqual(root, uri.fsPath)) continue;
+      if (mgr.isIgnored(uri.fsPath)) return ignoredDecoration();
     }
     return undefined;
   }
 
   dispose(): void { this._onDidChange.dispose(); }
+}
+
+function ignoredDecoration(): vscode.FileDecoration {
+  return {
+    color: new vscode.ThemeColor('gitDecoration.ignoredResourceForeground'),
+    tooltip: 'Ignored (.dvignore / .gitignore)',
+    // Don't propagate — we don't want every parent folder of an ignored
+    // file to render gray; only the file itself.
+    propagate: false,
+  };
 }
 
 function decorationFor(kind: ChangeKind): vscode.FileDecoration {

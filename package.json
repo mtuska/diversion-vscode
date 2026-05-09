@@ -2,7 +2,7 @@
   "name": "diversion-vscode",
   "displayName": "Diversion",
   "description": "Source control integration for Diversion (https://www.diversion.dev) — register Diversion as a first-class SCM provider in VS Code.",
-  "version": "0.3.11",
+  "version": "0.3.12",
   "publisher": "mtuska",
   "license": "Unlicense",
   "repository": {
@@ -453,6 +453,9 @@
     "test:watch": "vitest",
     "vscode:prepublish": "node esbuild.config.mjs --production",
     "package": "vsce package --no-dependencies"
+  },
+  "dependencies": {
+    "ignore": "^5.3.2"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

@@ -11,6 +11,7 @@ import { QuickDiff, DV_SCHEME } from './scm/quickDiff.js';
 import { CommitContentProvider, DV_COMMIT_SCHEME } from './scm/commitContent.js';
 import { LockDecorationProvider } from './scm/lockDecorations.js';
 import { ChangeDecorationsProvider } from './scm/changeDecorations.js';
+import { IgnoreManager } from './util/ignore.js';
 import { Blame } from './scm/blame.js';
 import { ShelvesTreeProvider, type ShelfNode } from './scm/shelvesView.js';
 import { watchWorkspace } from './util/fsWatch.js';
@@ -30,6 +31,7 @@ let blame: Blame | undefined;
 let shelvesProvider: ShelvesTreeProvider | undefined;
 let commitContent: CommitContentProvider | undefined;
 const providers = new Map<string, DiversionScmProvider>();
+const ignoreManagers = new Map<string, IgnoreManager>();
 let activationContext: vscode.ExtensionContext | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
@@ -284,6 +286,16 @@ async function scanWorkspaceFolders(): Promise<void> {
         repo, log, activationContext!.workspaceState, quickDiff, commitContent, changeDecorations,
       );
       providers.set(root, provider);
+
+      // Per-repo ignore matcher. Loads .dvignore + .gitignore files
+      // anywhere under the repo and feeds the change-decorations provider
+      // so ignored files render gray in the Explorer.
+      const ignoreMgr = new IgnoreManager(log);
+      ignoreManagers.set(root, ignoreMgr);
+      void ignoreMgr.load(root).then(() => {
+        changeDecorations?.attachIgnoreManager(root, ignoreMgr);
+      });
+
       const sample = openFolders[0] ?? root;
       const note = sample === root ? '' : ` [open folder: ${sample}${openFolders.length > 1 ? ` +${openFolders.length - 1} more` : ''}]`;
       log.info(
@@ -303,11 +315,18 @@ async function scanWorkspaceFolders(): Promise<void> {
     // One watcher per open folder so VS Code's workspace-folder-scoped FS
     // event delivery still works for sub-dir opens. They all feed the same
     // provider — refresh fires regardless of which folder the change came from.
+    const ignoreMgrForRoot = ignoreManagers.get(root);
     for (const folderPath of openFolders) {
-      const watcherDisposable = watchWorkspace(folderPath, (uri) => {
+      const watcherDisposable = watchWorkspace(folderPath, async (uri) => {
         provider!.scheduleRefresh(settings.refreshDebounceMs);
         void lockDecorations?.refresh();
         commitContent?.invalidate(uri.fsPath);
+        // If a .dvignore / .gitignore file changed, reload the matcher
+        // and re-fire decorations across the whole repo.
+        if (ignoreMgrForRoot) {
+          const reloaded = await ignoreMgrForRoot.maybeReload(uri.fsPath);
+          if (reloaded) changeDecorations?.refresh();
+        }
       });
       activationContext?.subscriptions.push(watcherDisposable);
     }
@@ -317,6 +336,8 @@ async function scanWorkspaceFolders(): Promise<void> {
     if (!foldersByRoot.has(key)) {
       provider.dispose();
       providers.delete(key);
+      changeDecorations?.detachIgnoreManager(key);
+      ignoreManagers.delete(key);
       log.info(`Removed SCM provider for ${key}`);
     }
   }
