@@ -1,0 +1,13 @@
+In repo SampleRepo dv.repo.00000000-0000-0000-0000-000000000000
+On branch main dv.branch.1
+Cloud workspace is over commit dv.commit.40
+Working in workspace sample-workspace @ sample-host (dv.ws.00000000-0000-0000-0000-000000000000)
+Total modified paths: 5 (3 files)
+Modified:
+	 Source/Survival/Private/Player.cpp
+	 Source/Survival/Public/Player.h
+Deleted:
+	 Source/Old/Removed.cpp
+New:
+	 Plugins/UnrealClaude
+	 Source/New/Added.cpp

@@ -1,0 +1,11 @@
+diff --git a/src/foo.ts b/src/foo.ts
+--- a/src/foo.ts
++++ b/src/foo.ts
+@@ -1,5 +1,6 @@
+ line one
+ line two
+-old three
++new three
++inserted four
+ line four
+ line five

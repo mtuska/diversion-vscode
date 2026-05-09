@@ -1,0 +1,30 @@
+diff --git a/Documentation/plans/overview.md b/Documentation/plans/overview.md
+--- a/Documentation/plans/overview.md
++++ b/Documentation/plans/overview.md
+@@ -22,19 +22,22 @@
+ 
+ | Item | Owner | Status | Notes |
+ |---|---|---|---|
+-| **Alpha** | sampler-a | Q2 2026 | Item alpha — original baseline row before the test edit. |
++| **Alpha** | sampler-a | TBD (likely Q4 2026 / Q1 2027) | Item alpha — *deferred*; placeholder text in lieu of real content. |
+ | **Bravo** | sampler-a | Q2 2026 | Item bravo — second row, untouched by the test diff. |
+ | **Charlie** | sampler-b | Q2 2026 | Item charlie — third row, untouched by the test diff. |
+ | **Delta** | sampler-b | Q2 2026 | Item delta — fourth row, untouched by the test diff. |
+ | **Echo** | sampler-a | TBD | Item echo — fifth row, untouched. |
+ | **Foxtrot** | TBD | TBD | Item foxtrot — sixth row, untouched. |
+-| **Interactive Sample item** | TBD | TBD | Original interactive item description before the edit. |
++| **Interactive Sample item** | sampler-a | Q2 2026 (starting late Q2, into Q3) | Replacement row exercising multi-word edits. |
+ | **Hotel** | TBD | TBD | Item hotel — eighth row, untouched. |
+ | **India** | TBD | TBD | Item india — ninth row, untouched. |
+ | **Juliet** | TBD | TBD | Item juliet — tenth row, untouched. |
+ | **Kilo** | TBD | TBD | Item kilo — eleventh row, untouched. |
+ | **Lima** | TBD | TBD | Item lima — twelfth row, untouched. |
+ 
+-Specs for the planned items live in [refs/](../refs/) once written.
++Specs for the planned items live in [refs/](../refs/) once written. Active-quarter
++design coverage per workstream — what each item is actually exercising right now
++versus what's still scoped — lives in the current quarterly plan ([sample.md](sample.md)),
++not here.
+ 
+ ---
+ 

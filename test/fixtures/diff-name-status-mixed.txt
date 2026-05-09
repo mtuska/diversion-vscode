@@ -1,0 +1,10 @@
+M	Content/Main/Characters/BP_Core_Character.uasset
+M	Content/Main/Core/BP_CorePlayerController.uasset
+A	Content/Main/Characters/MotionMatching
+D	Content/Main/Characters/Animations
+D	Source/Survival/Public/Animation
+M	Content/Main/Keybinds/Basic/IMC_Default.uasset
+M	Content/Main/World/Maps/Basic.umap
+M	Source/Survival/Private/Inventory/C_InventoryComponent.Items.cpp
+A	Content/Main/Characters/MotionMatching/Animations
+D	Content/Main/Characters/Animations/ABP_Survior_Base.uasset
