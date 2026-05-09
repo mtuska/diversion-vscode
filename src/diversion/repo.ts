@@ -153,6 +153,27 @@ export class Repo {
     await runDv(['view'], { cwd: this.root, dvPath: this.dvPath, timeoutMs: 5_000 });
   }
 
+  /** Pause background sync for this workspace (like running offline). */
+  async pauseSync(): Promise<void> {
+    await runDvOrThrow(['workspace', 'pause'], { cwd: this.root, dvPath: this.dvPath, timeoutMs: 30_000 });
+  }
+
+  /** Resume background sync. */
+  async resumeSync(): Promise<void> {
+    await runDvOrThrow(['workspace', 'resume'], { cwd: this.root, dvPath: this.dvPath, timeoutMs: 30_000 });
+  }
+
+  /** Force-pull the workspace's base branch (manual update when auto-update is off). */
+  async updateWorkspace(): Promise<void> {
+    await runDvOrThrow(['update'], { cwd: this.root, dvPath: this.dvPath, timeoutMs: 0 });
+  }
+
+  /** Validate local repository integrity. */
+  async verify(): Promise<string> {
+    const r = await runDvOrThrow(['verify'], { cwd: this.root, dvPath: this.dvPath, timeoutMs: 0 });
+    return r.stdout;
+  }
+
   /** List all hard locks visible to this workspace. Cached briefly. */
   async listLocks(): Promise<LockInfo[]> {
     if (this.locksCache && Date.now() - this.locksCacheAt < 5_000) {

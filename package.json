@@ -117,6 +117,35 @@
         "command": "diversion.showOutput",
         "title": "Show Output",
         "category": "Diversion"
+      },
+      {
+        "command": "diversion.moreActions",
+        "title": "More Actions...",
+        "category": "Diversion",
+        "icon": "$(ellipsis)"
+      },
+      {
+        "command": "diversion.pauseSync",
+        "title": "Pause Sync",
+        "category": "Diversion",
+        "icon": "$(debug-pause)"
+      },
+      {
+        "command": "diversion.resumeSync",
+        "title": "Resume Sync",
+        "category": "Diversion",
+        "icon": "$(debug-continue)"
+      },
+      {
+        "command": "diversion.updateWorkspace",
+        "title": "Update Workspace",
+        "category": "Diversion",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "diversion.verify",
+        "title": "Verify Repository Integrity",
+        "category": "Diversion"
       }
     ],
     "configuration": {
@@ -155,8 +184,9 @@
     "menus": {
       "scm/title": [
         { "command": "diversion.commit", "when": "scmProvider == diversion", "group": "navigation@1" },
-        { "command": "diversion.refresh", "when": "scmProvider == diversion", "group": "navigation@2" },
-
+        { "command": "diversion.refresh", "when": "scmProvider == diversion", "group": "navigation@2" }
+      ],
+      "scm/sourceControl": [
         { "command": "diversion.commit", "when": "scmProvider == diversion", "group": "1_actions@1" },
         { "command": "diversion.discardAll", "when": "scmProvider == diversion", "group": "1_actions@2" },
         { "command": "diversion.refresh", "when": "scmProvider == diversion", "group": "1_actions@3" },
@@ -165,13 +195,18 @@
         { "command": "diversion.createBranch", "when": "scmProvider == diversion", "group": "2_branch@2" },
         { "command": "diversion.merge", "when": "scmProvider == diversion", "group": "2_branch@3" },
 
-        { "command": "diversion.lockFile", "when": "scmProvider == diversion", "group": "3_locks@1" },
-        { "command": "diversion.unlockFile", "when": "scmProvider == diversion", "group": "3_locks@2" },
-        { "command": "diversion.listLocks", "when": "scmProvider == diversion", "group": "3_locks@3" },
+        { "command": "diversion.updateWorkspace", "when": "scmProvider == diversion", "group": "3_sync@1" },
+        { "command": "diversion.pauseSync", "when": "scmProvider == diversion", "group": "3_sync@2" },
+        { "command": "diversion.resumeSync", "when": "scmProvider == diversion", "group": "3_sync@3" },
 
-        { "command": "diversion.viewHistory", "when": "scmProvider == diversion", "group": "4_view@1" },
-        { "command": "diversion.openInWeb", "when": "scmProvider == diversion", "group": "4_view@2" },
-        { "command": "diversion.showOutput", "when": "scmProvider == diversion", "group": "4_view@3" }
+        { "command": "diversion.lockFile", "when": "scmProvider == diversion", "group": "4_locks@1" },
+        { "command": "diversion.unlockFile", "when": "scmProvider == diversion", "group": "4_locks@2" },
+        { "command": "diversion.listLocks", "when": "scmProvider == diversion", "group": "4_locks@3" },
+
+        { "command": "diversion.viewHistory", "when": "scmProvider == diversion", "group": "5_view@1" },
+        { "command": "diversion.openInWeb", "when": "scmProvider == diversion", "group": "5_view@2" },
+        { "command": "diversion.verify", "when": "scmProvider == diversion", "group": "5_view@3" },
+        { "command": "diversion.showOutput", "when": "scmProvider == diversion", "group": "5_view@4" }
       ],
       "scm/resourceState/context": [
         {

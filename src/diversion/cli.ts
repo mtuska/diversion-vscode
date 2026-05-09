@@ -152,6 +152,43 @@ export function looksLikeError(text: string): boolean {
 }
 
 function trimErr(r: DvResult): string {
-  const text = (r.stderr || r.stdout || '').trim();
-  return text.length > 400 ? text.slice(0, 400) + '…' : text;
+  return summarizeDvError(r.stderr || r.stdout || '');
+}
+
+const DETAIL_RE = /"detail"\s*:\s*"((?:[^"\\]|\\.)+)"/;
+const STATUS_RE = /"status"\s*:\s*(\d{3})/;
+const APOLOGY_RES: readonly RegExp[] = [
+  /^Oh no, looks like something went wrong/i,
+  /^An engineer has been notified/i,
+  /^Please run `?dv support`?/i,
+  /^Your files are safe/i,
+];
+
+/**
+ * Strip the boilerplate apology text that dv emits for backend errors and
+ * extract the operative bits (HTTP status + the embedded JSON `detail`).
+ *
+ * `dv lock` on a non-paid tier currently returns a multi-line "Oh no…"
+ * message wrapping a JSON `{"status":403,"detail":"…"}` payload — this
+ * helper distills that to `(403) Hard locks require a Studio or
+ * Enterprise subscription`.
+ */
+export function summarizeDvError(text: string): string {
+  if (!text) return '';
+  const detail = DETAIL_RE.exec(text)?.[1];
+  const status = STATUS_RE.exec(text)?.[1];
+  if (detail) {
+    const cleaned = detail.replace(/\\"/g, '"').replace(/\\n/g, ' ');
+    return status ? `(${status}) ${cleaned}` : cleaned;
+  }
+
+  // No JSON detail — return the first meaningful line, skipping apology noise.
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (APOLOGY_RES.some((p) => p.test(line))) continue;
+    if (line.startsWith('[failed to execute')) continue;
+    return line.length > 200 ? line.slice(0, 200) + '…' : line;
+  }
+  return text.split(/\r?\n/, 1)[0]!.slice(0, 200);
 }

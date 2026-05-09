@@ -87,6 +87,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('diversion.resolveConflict', resolveConflictCommand),
     vscode.commands.registerCommand('diversion.markResolved', markResolvedCommand),
     vscode.commands.registerCommand('diversion.showOutput', () => logger?.show()),
+    vscode.commands.registerCommand('diversion.moreActions', moreActionsCommand),
+    vscode.commands.registerCommand('diversion.pauseSync', pauseSyncCommand),
+    vscode.commands.registerCommand('diversion.resumeSync', resumeSyncCommand),
+    vscode.commands.registerCommand('diversion.updateWorkspace', updateWorkspaceCommand),
+    vscode.commands.registerCommand('diversion.verify', verifyCommand),
   );
 
   await healthCheck(log);
@@ -238,6 +243,98 @@ function activeProvider(): DiversionScmProvider | undefined {
 }
 
 // ──────────────────────────── commands ────────────────────────────
+
+async function moreActionsCommand(): Promise<void> {
+  type Item = vscode.QuickPickItem & { command?: string };
+  const sep = (label: string): Item => ({ label, kind: vscode.QuickPickItemKind.Separator });
+  const items: Item[] = [
+    sep('Actions'),
+    { label: '$(check) Commit (all changes)', command: 'diversion.commit' },
+    { label: '$(discard) Discard All Changes…', command: 'diversion.discardAll' },
+    { label: '$(refresh) Refresh', command: 'diversion.refresh' },
+    sep('Branch'),
+    { label: '$(git-branch) Switch Branch…', command: 'diversion.switchBranch' },
+    { label: '$(add) Create Branch…', command: 'diversion.createBranch' },
+    { label: '$(git-merge) Merge Into Current…', command: 'diversion.merge' },
+    sep('Sync'),
+    { label: '$(sync) Update Workspace', command: 'diversion.updateWorkspace' },
+    { label: '$(debug-pause) Pause Sync', command: 'diversion.pauseSync' },
+    { label: '$(debug-continue) Resume Sync', command: 'diversion.resumeSync' },
+    sep('Locks'),
+    { label: '$(lock) Lock File', command: 'diversion.lockFile' },
+    { label: '$(unlock) Unlock File', command: 'diversion.unlockFile' },
+    { label: '$(list-tree) List Locks…', command: 'diversion.listLocks' },
+    sep('View'),
+    { label: '$(history) View History', command: 'diversion.viewHistory' },
+    { label: '$(globe) Open in Web UI', command: 'diversion.openInWeb' },
+    { label: '$(verified) Verify Repository Integrity', command: 'diversion.verify' },
+    { label: '$(output) Show Output Channel', command: 'diversion.showOutput' },
+  ];
+  const pick = await vscode.window.showQuickPick(items, { placeHolder: 'Diversion: choose an action' });
+  if (pick?.command) await vscode.commands.executeCommand(pick.command);
+}
+
+async function pauseSyncCommand(): Promise<void> {
+  const provider = activeProvider();
+  if (!provider) return;
+  try {
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Window, title: 'dv workspace pause' },
+      () => provider.repo.pauseSync(),
+    );
+    await provider.refresh();
+    updateStatusBar();
+    void vscode.window.showInformationMessage('Diversion: sync paused.');
+  } catch (err) {
+    void vscode.window.showErrorMessage(`Diversion: pause failed: ${(err as Error).message}`);
+  }
+}
+
+async function resumeSyncCommand(): Promise<void> {
+  const provider = activeProvider();
+  if (!provider) return;
+  try {
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Window, title: 'dv workspace resume' },
+      () => provider.repo.resumeSync(),
+    );
+    await provider.refresh();
+    updateStatusBar();
+    void vscode.window.showInformationMessage('Diversion: sync resumed.');
+  } catch (err) {
+    void vscode.window.showErrorMessage(`Diversion: resume failed: ${(err as Error).message}`);
+  }
+}
+
+async function updateWorkspaceCommand(): Promise<void> {
+  const provider = activeProvider();
+  if (!provider) return;
+  try {
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.SourceControl, title: 'dv update' },
+      () => provider.repo.updateWorkspace(),
+    );
+    await provider.refresh();
+    updateStatusBar();
+  } catch (err) {
+    void vscode.window.showErrorMessage(`Diversion: update failed: ${(err as Error).message}`);
+  }
+}
+
+async function verifyCommand(): Promise<void> {
+  const provider = activeProvider();
+  if (!provider) return;
+  try {
+    const out = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Window, title: 'dv verify' },
+      () => provider.repo.verify(),
+    );
+    logger?.info(`[verify] ${out.trim()}`);
+    void vscode.window.showInformationMessage('Diversion: integrity check complete (see output channel).');
+  } catch (err) {
+    void vscode.window.showErrorMessage(`Diversion: verify failed: ${(err as Error).message}`);
+  }
+}
 
 async function refreshAllCommand(): Promise<void> {
   for (const p of providers.values()) await p.refresh();
