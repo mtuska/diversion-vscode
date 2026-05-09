@@ -10,6 +10,7 @@ import { DiversionScmProvider } from './scm/provider.js';
 import { QuickDiff, DV_SCHEME } from './scm/quickDiff.js';
 import { CommitContentProvider, DV_COMMIT_SCHEME } from './scm/commitContent.js';
 import { LockDecorationProvider } from './scm/lockDecorations.js';
+import { ChangeDecorationsProvider } from './scm/changeDecorations.js';
 import { Blame } from './scm/blame.js';
 import { ShelvesTreeProvider, type ShelfNode } from './scm/shelvesView.js';
 import { watchWorkspace } from './util/fsWatch.js';
@@ -24,6 +25,7 @@ let logger: Logger | undefined;
 let statusBar: StatusBar | undefined;
 let quickDiff: QuickDiff | undefined;
 let lockDecorations: LockDecorationProvider | undefined;
+let changeDecorations: ChangeDecorationsProvider | undefined;
 let blame: Blame | undefined;
 let shelvesProvider: ShelvesTreeProvider | undefined;
 let commitContent: CommitContentProvider | undefined;
@@ -60,6 +62,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     () => [...providers.values()].map((p) => p.repo),
     log,
   );
+  changeDecorations = new ChangeDecorationsProvider(log);
   blame = new Blame(
     {
       forUri: (uri) => {
@@ -79,10 +82,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     quickDiff,
     commitContent,
     lockDecorations,
+    changeDecorations,
     blame,
     vscode.workspace.registerTextDocumentContentProvider(DV_SCHEME, quickDiff),
     vscode.workspace.registerTextDocumentContentProvider(DV_COMMIT_SCHEME, commitContent),
     vscode.window.registerFileDecorationProvider(lockDecorations),
+    vscode.window.registerFileDecorationProvider(changeDecorations),
     vscode.window.registerTreeDataProvider('diversion.shelves', shelvesProvider),
     { dispose: () => log.dispose() },
     {
@@ -262,7 +267,7 @@ async function scanWorkspaceFolders(): Promise<void> {
     if (!provider) {
       const repo = new Repo(daemon, id, settings.dvPath, log);
       provider = new DiversionScmProvider(
-        repo, log, activationContext!.workspaceState, quickDiff, commitContent,
+        repo, log, activationContext!.workspaceState, quickDiff, commitContent, changeDecorations,
       );
       providers.set(root, provider);
       const sample = openFolders[0] ?? root;
@@ -834,8 +839,19 @@ async function discardChangesCommand(...resources: vscode.SourceControlResourceS
     const provider = providerForUri(r.resourceUri);
     if (!provider) continue;
     try {
-      const relative = vscode.workspace.asRelativePath(r.resourceUri, false).replace(/\\/g, '/');
-      await provider.repo.discardPath(relative);
+      // Discard semantics differ by kind, just like git:
+      //  - added (untracked) → delete the file from disk; `dv reset` has
+      //    no useful effect for paths that aren't yet committed
+      //  - modified / deleted / renamed → `dv reset -f` returns the file
+      //    to its base-commit state
+      const ctx = r.contextValue ?? '';
+      const isAdded = ctx === 'unstaged-added' || ctx === 'staged-added';
+      if (isAdded) {
+        await fs.rm(r.resourceUri.fsPath, { recursive: true, force: true });
+      } else {
+        const relative = vscode.workspace.asRelativePath(r.resourceUri, false).replace(/\\/g, '/');
+        await provider.repo.discardPath(relative);
+      }
       touched.add(provider);
     } catch (err) {
       void vscode.window.showErrorMessage(`Diversion discard failed: ${(err as Error).message}`);

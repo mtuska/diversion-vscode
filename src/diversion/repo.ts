@@ -168,7 +168,11 @@ export class Repo {
   }
 
   async discardPath(path: string): Promise<void> {
-    await runDvOrThrow(['reset', path], { cwd: this.root, dvPath: this.dvPath });
+    // `-f` skips the interactive confirmation dv otherwise waits on. Without
+    // it `dv reset <path>` blocks indefinitely when run without a TTY (which
+    // is exactly how we run it from the extension), making the command a
+    // silent no-op.
+    await runDvOrThrow(['reset', path, '-f'], { cwd: this.root, dvPath: this.dvPath });
   }
 
   async discardAll(includeNew: boolean): Promise<void> {

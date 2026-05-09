@@ -2,7 +2,7 @@
   "name": "diversion-vscode",
   "displayName": "Diversion",
   "description": "Source control integration for Diversion (https://www.diversion.dev) — register Diversion as a first-class SCM provider in VS Code.",
-  "version": "0.3.7",
+  "version": "0.3.8",
   "publisher": "mtuska",
   "license": "Unlicense",
   "repository": {
@@ -352,17 +352,17 @@
         },
         {
           "command": "diversion.discardChanges",
-          "when": "scmProvider == diversion && scmResourceState == unstaged",
+          "when": "scmProvider == diversion && scmResourceState =~ /^unstaged-/",
           "group": "inline@2"
         },
         {
           "command": "diversion.stage",
-          "when": "scmProvider == diversion && scmResourceState == unstaged",
+          "when": "scmProvider == diversion && scmResourceState =~ /^unstaged-/",
           "group": "inline@3"
         },
         {
           "command": "diversion.unstage",
-          "when": "scmProvider == diversion && scmResourceState == staged",
+          "when": "scmProvider == diversion && scmResourceState =~ /^staged-/",
           "group": "inline@3"
         },
         {
@@ -373,12 +373,12 @@
 
         {
           "command": "diversion.stage",
-          "when": "scmProvider == diversion && scmResourceState == unstaged",
+          "when": "scmProvider == diversion && scmResourceState =~ /^unstaged-/",
           "group": "1_modification@1"
         },
         {
           "command": "diversion.unstage",
-          "when": "scmProvider == diversion && scmResourceState == staged",
+          "when": "scmProvider == diversion && scmResourceState =~ /^staged-/",
           "group": "1_modification@1"
         },
         {
@@ -388,14 +388,14 @@
         },
         {
           "command": "diversion.discardChanges",
-          "when": "scmProvider == diversion && scmResourceState == unstaged",
+          "when": "scmProvider == diversion && scmResourceState =~ /^unstaged-/",
           "group": "1_modification@3"
         }
       ],
       "scm/resourceGroup/context": [
         {
           "command": "diversion.stageAll",
-          "when": "scmProvider == diversion && (scmResourceGroup == changes || scmResourceGroup == new)",
+          "when": "scmProvider == diversion && scmResourceGroup == changes",
           "group": "inline"
         },
         {
@@ -405,7 +405,7 @@
         },
         {
           "command": "diversion.stageAll",
-          "when": "scmProvider == diversion && (scmResourceGroup == changes || scmResourceGroup == new)",
+          "when": "scmProvider == diversion && scmResourceGroup == changes",
           "group": "1_modification@1"
         },
         {

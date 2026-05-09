@@ -5,6 +5,7 @@ import type { FileChange, ChangeKind } from '../diversion/types.js';
 import type { Logger } from '../util/log.js';
 import { DiversionHistoryProvider } from './historyProvider.js';
 import type { CommitContentProvider } from './commitContent.js';
+import type { ChangeDecorationsProvider } from './changeDecorations.js';
 import { isInsideOrEqual } from '../util/path.js';
 
 const PROVIDER_ID = 'diversion';
@@ -17,7 +18,6 @@ export class DiversionScmProvider implements vscode.Disposable {
   private readonly sc: vscode.SourceControl;
   private readonly groupStaged: vscode.SourceControlResourceGroup;
   private readonly groupChanges: vscode.SourceControlResourceGroup;
-  private readonly groupNew: vscode.SourceControlResourceGroup;
   private readonly groupConflicts: vscode.SourceControlResourceGroup;
   private readonly disposables: vscode.Disposable[] = [];
 
@@ -52,6 +52,7 @@ export class DiversionScmProvider implements vscode.Disposable {
     private readonly storage: vscode.Memento,
     quickDiffProvider?: vscode.QuickDiffProvider,
     commitContentProvider?: CommitContentProvider,
+    private readonly changeDecorations?: ChangeDecorationsProvider,
   ) {
     this.storageKey = `diversion.staged.${repo.info.workspaceId}`;
     const persisted = this.storage.get<string[]>(this.storageKey, []);
@@ -90,18 +91,17 @@ export class DiversionScmProvider implements vscode.Disposable {
       this.logger.warn(`[scm] history provider unavailable: ${(err as Error).message}`);
     }
 
-    // Order matters — Conflicts first (must-act-on), then the git-style
-    // Staged group above unstaged Changes / New.
+    // Order matches git's SCM convention: Conflicts → Staged → Changes
+    // (the unstaged catch-all). What used to be "New" lives inside
+    // Changes now, badged "A" via the FileDecorationProvider.
     this.groupConflicts = this.sc.createResourceGroup('conflicts', 'Conflicts');
     this.groupStaged = this.sc.createResourceGroup('staged', 'Staged Changes');
     this.groupChanges = this.sc.createResourceGroup('changes', 'Changes');
-    this.groupNew = this.sc.createResourceGroup('new', 'New');
     this.groupConflicts.hideWhenEmpty = true;
     this.groupStaged.hideWhenEmpty = true;
     this.groupChanges.hideWhenEmpty = true;
-    this.groupNew.hideWhenEmpty = true;
 
-    this.disposables.push(this.sc, this.groupConflicts, this.groupStaged, this.groupChanges, this.groupNew);
+    this.disposables.push(this.sc, this.groupConflicts, this.groupStaged, this.groupChanges);
   }
 
   get sourceControl(): vscode.SourceControl { return this.sc; }
@@ -176,8 +176,8 @@ export class DiversionScmProvider implements vscode.Disposable {
       if (stagingChanged) this.persistStaged();
 
       const staged: vscode.SourceControlResourceState[] = [];
-      const modifiedDeleted: vscode.SourceControlResourceState[] = [];
-      const added: vscode.SourceControlResourceState[] = [];
+      const changes: vscode.SourceControlResourceState[] = [];
+      const decorationStates = new Map<string, ChangeKind>();
 
       let hidden = 0;
       for (const change of state.changes) {
@@ -186,11 +186,10 @@ export class DiversionScmProvider implements vscode.Disposable {
         const rstate = toResourceState(this.repo.root, change, isStaged);
         if (isStaged) {
           staged.push(rstate);
-        } else if (change.kind === 'added') {
-          added.push(rstate);
         } else {
-          modifiedDeleted.push(rstate);
+          changes.push(rstate);
         }
+        decorationStates.set(path.join(this.repo.root, change.path), change.kind);
       }
 
       const conflicts: vscode.SourceControlResourceState[] = [];
@@ -211,16 +210,16 @@ export class DiversionScmProvider implements vscode.Disposable {
 
       this.groupConflicts.resourceStates = conflicts;
       this.groupStaged.resourceStates = staged;
-      this.groupChanges.resourceStates = modifiedDeleted;
-      this.groupNew.resourceStates = added;
-      this.sc.count = conflicts.length + staged.length + modifiedDeleted.length + added.length;
+      this.groupChanges.resourceStates = changes;
+      this.sc.count = conflicts.length + staged.length + changes.length;
       this.updateTitleButtons();
       this.history?.notifyCurrentChanged();
+      this.changeDecorations?.setRepoState(this.repo.root, decorationStates);
       const filterNote = this.openFolders.length > 0 && hidden > 0
         ? ` (${hidden} hidden by open-folder filter: ${this.openFolders.join(', ')})`
         : '';
       this.logger.debug(
-        `[scm] refresh: ${conflicts.length} conflicts + ${staged.length} staged + ${modifiedDeleted.length} changes + ${added.length} new${filterNote}`,
+        `[scm] refresh: ${conflicts.length} conflicts + ${staged.length} staged + ${changes.length} changes${filterNote}`,
       );
     } catch (err) {
       this.logger.error(`[scm] refresh failed for ${this.repo.root}`, err);
@@ -234,7 +233,6 @@ export class DiversionScmProvider implements vscode.Disposable {
     const out: string[] = [];
     for (const r of this.groupStaged.resourceStates) out.push(this.relPath(r.resourceUri));
     for (const r of this.groupChanges.resourceStates) out.push(this.relPath(r.resourceUri));
-    for (const r of this.groupNew.resourceStates) out.push(this.relPath(r.resourceUri));
     return out;
   }
 
@@ -327,11 +325,11 @@ function toResourceState(
   isStaged: boolean,
 ): vscode.SourceControlResourceState {
   const uri = vscode.Uri.file(path.join(root, change.path));
-  // contextValue drives the inline / context-menu when-clauses in package.json.
-  // Encoding staged-vs-unstaged here (rather than relying on `scmResourceGroup`,
-  // which doesn't propagate to nested entries in tree view) means the
-  // stage/unstage buttons work correctly in both list and tree modes.
-  const contextValue = isStaged ? 'staged' : 'unstaged';
+  // contextValue drives the inline / context-menu when-clauses in package.json
+  // and is also read by the discard command to choose between fs.rm (added)
+  // and `dv reset -f` (modified/deleted/renamed). Encoding the kind on the
+  // unstaged side keeps that branching declarative.
+  const contextValue = isStaged ? `staged-${change.kind}` : `unstaged-${change.kind}`;
   return {
     resourceUri: uri,
     decorations: decorationsFor(change.kind),
