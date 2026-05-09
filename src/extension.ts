@@ -754,7 +754,7 @@ async function commitSelectedCommand(...resources: vscode.SourceControlResourceS
 
   const paths = resources
     .filter((r) => providerForUri(r.resourceUri) === provider)
-    .map((r) => vscode.workspace.asRelativePath(r.resourceUri, false).replace(/\\/g, '/'));
+    .map((r) => relForResource(provider, r.resourceUri));
 
   try {
     await vscode.window.withProgress(
@@ -859,7 +859,14 @@ async function discardChangesCommand(...resources: vscode.SourceControlResourceS
       if (isAdded) {
         await fs.rm(r.resourceUri.fsPath, { recursive: true, force: true });
       } else {
-        const relative = vscode.workspace.asRelativePath(r.resourceUri, false).replace(/\\/g, '/');
+        // Path must be relative to the repo root, not the open workspace
+        // folder. When the user opens a sub-directory of the repo,
+        // workspace.asRelativePath returns a path relative to that
+        // sub-folder — `dv reset` then sees a non-existent path and
+        // silently no-ops. relForResource resolves against repo.root so
+        // dv sees the canonical Documentation/nod.md form regardless of
+        // which sub-folder VS Code thinks the user is in.
+        const relative = relForResource(provider, r.resourceUri);
         await provider.repo.discardPath(relative);
       }
       touched.add(provider);
