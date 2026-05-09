@@ -295,7 +295,7 @@ async function scanWorkspaceFolders(): Promise<void> {
     if (!provider) {
       const repo = new Repo(daemon, id, settings.dvPath, log);
       provider = new DiversionScmProvider(
-        repo, log, activationContext!.workspaceState, quickDiff, commitContent, changeDecorations,
+        repo, log, activationContext!.workspaceState, quickDiff, changeDecorations,
       );
       providers.set(root, provider);
 

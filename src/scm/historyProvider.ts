@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { commitContentUri, type CommitContentProvider } from './commitContent.js';
+import { commitContentUri } from './commitContent.js';
 import type { Repo } from '../diversion/repo.js';
 import type { Logger } from '../util/log.js';
 
@@ -39,7 +39,6 @@ export class DiversionHistoryProvider implements vscode.SourceControlHistoryProv
   constructor(
     private readonly repo: Repo,
     private readonly logger: Logger,
-    private readonly commitContent: CommitContentProvider | undefined,
   ) {}
 
   // Convenience accessors used both by the API and by callers in extension.ts.
@@ -185,33 +184,22 @@ export class DiversionHistoryProvider implements vscode.SourceControlHistoryProv
   ): Promise<vscode.SourceControlHistoryItemChange[]> {
     const tStart = Date.now();
     try {
-      // Phase 1: get the file list. We need this before we can split the
-      // prefetch into parallel chunks (so chunks know which files to ask for).
-      // It's a single quick `dv show --name-status` — typically <300ms even
-      // on big commits.
+      // We only need `dv show --name-status` here — fast (<1s typically).
+      // Returning the file list quickly lets VS Code render the tree
+      // immediately. Per-file diff content is resolved lazily by the
+      // `dv-commit:` content provider when the user actually opens a file
+      // (1× `dv diff --base <commit> <single-path>` per file). The shared
+      // dv semaphore caps concurrent loads to `diversion.maxParallelProcesses`.
+      //
+      // We tried bulk prefetching (one dv diff covering every file in the
+      // commit) but on big commits it was a 30–60s wall — a wait the user
+      // pays before seeing *anything*. Lazy resolution shifts that cost to
+      // only the files the user actually clicks, which is normally a tiny
+      // fraction of the commit.
       const changes = await this.repo.fileChangesForCommit(historyItemId);
-      const filePaths = changes.map((c) => c.path);
-      const tAfterShow = Date.now();
-
-      // Phase 2: prefetch both sides of the diff in parallel. With a large
-      // file list, prefetchAtCommit fans each side into N concurrent
-      // `dv diff` chunks — actually exercising `diversion.maxParallelProcesses`.
-      const prefetchPromises: Promise<void>[] = [];
-      if (this.commitContent) {
-        prefetchPromises.push(
-          this.commitContent.prefetchAtCommit(historyItemId, this.repo.root, this.repo.binaryPath, filePaths),
-        );
-        if (historyItemParentId) {
-          prefetchPromises.push(
-            this.commitContent.prefetchAtCommit(historyItemParentId, this.repo.root, this.repo.binaryPath, filePaths),
-          );
-        }
-      }
-      await Promise.all(prefetchPromises);
       this.logger.info(
         `[history] provideHistoryItemChanges(${historyItemId}) · ` +
-        `total=${Date.now() - tStart}ms (show=${tAfterShow - tStart}ms, ` +
-        `prefetch=${Date.now() - tAfterShow}ms, ${changes.length} file(s))`,
+        `total=${Date.now() - tStart}ms (${changes.length} file(s), lazy)`,
       );
       // The "parent" for diff purposes is the linear predecessor — we
       // reuse the parentId VS Code passes us if it's there, otherwise we

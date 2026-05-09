@@ -4,7 +4,6 @@ import type { Repo } from '../diversion/repo.js';
 import type { FileChange, ChangeKind } from '../diversion/types.js';
 import type { Logger } from '../util/log.js';
 import { DiversionHistoryProvider } from './historyProvider.js';
-import type { CommitContentProvider } from './commitContent.js';
 import type { ChangeDecorationsProvider } from './changeDecorations.js';
 import { isInsideOrEqual } from '../util/path.js';
 
@@ -51,7 +50,6 @@ export class DiversionScmProvider implements vscode.Disposable {
     private readonly logger: Logger,
     private readonly storage: vscode.Memento,
     quickDiffProvider?: vscode.QuickDiffProvider,
-    commitContentProvider?: CommitContentProvider,
     private readonly changeDecorations?: ChangeDecorationsProvider,
   ) {
     this.storageKey = `diversion.staged.${repo.info.workspaceId}`;
@@ -83,7 +81,7 @@ export class DiversionScmProvider implements vscode.Disposable {
     // graph view simply won't populate, but the rest of the provider still
     // works. See historyProvider.ts for opt-in details.
     try {
-      this.history = new DiversionHistoryProvider(this.repo, this.logger, commitContentProvider);
+      this.history = new DiversionHistoryProvider(this.repo, this.logger);
       // The `historyProvider` property is added by the proposed API; cast
       // through `any` so this still compiles when the proposal isn't loaded.
       (this.sc as { historyProvider?: DiversionHistoryProvider }).historyProvider = this.history;

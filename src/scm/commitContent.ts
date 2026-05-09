@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 import * as vscode from 'vscode';
 import { runDv } from '../diversion/cli.js';
-import { parseUnifiedDiff, splitMultiFileDiff } from '../diversion/parsers/unifiedDiff.js';
+import { parseUnifiedDiff } from '../diversion/parsers/unifiedDiff.js';
 import { reverseApply } from '../diversion/reverseApply.js';
 import { looksBinary } from '../util/binary.js';
 import { toForwardSlashes } from '../util/path.js';
@@ -14,19 +14,6 @@ export const DV_COMMIT_SCHEME = 'dv-commit';
 
 /** Cap for the on-disk cache directory. Older entries are evicted by mtime. */
 const DISK_CACHE_BYTE_LIMIT = 50 * 1024 * 1024;
-
-/**
- * When prefetching a commit with more files than this, we split the work
- * into N chunks and run them concurrently. Below the threshold, a single
- * `dv diff` call is cheaper than the per-process spawn cost of chunking.
- */
-const PREFETCH_CHUNK_SIZE = 50;
-
-function chunkArray<T>(arr: readonly T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-  return out;
-}
 
 interface RepoLookup {
   rootForPath(fsPath: string): { root: string; dvPath: string | undefined } | undefined;
@@ -148,194 +135,20 @@ export class CommitContentProvider implements vscode.TextDocumentContentProvider
   }
 
   /**
-   * Pre-warm the cache for an entire commit. Two paths:
+   * Lazy per-file resolution: when the user clicks a file in the SCM Graph,
+   * VS Code asks the content provider for that file's content via
+   * {@link provideTextDocumentContent}, which falls through to {@link compute}.
+   * That issues a single-file `dv diff --base <commit> <path>` (~200ms each).
+   * The shared dv semaphore caps how many of those run concurrently, so
+   * `diversion.maxParallelProcesses` controls how fast a user clicking
+   * around in the diff view is served.
    *
-   *   1. **Single call** (small commits or no file list): one
-   *      `dv diff --base <commit>` produces every file's diff in one shot.
-   *      Cheaper for small commits; the original prefetch behaviour.
-   *
-   *   2. **Chunked parallel** (large commits with a known file list): split
-   *      the file list into chunks of {@link PREFETCH_CHUNK_SIZE} and run
-   *      `dv diff --base <commit> <chunk-paths>` calls concurrently. The
-   *      shared semaphore in `cli.ts` caps actual parallelism to whatever
-   *      the user has configured via `diversion.maxParallelProcesses`, so
-   *      this naturally exercises that setting on big commits.
-   *
-   * Trade-off: chunking costs extra process spawns and daemon round-trips
-   * but lets the daemon's cloud fetches run in parallel — a 30s monolithic
-   * call on a 400-file commit becomes ~30s/N where N is the cap (assuming
-   * the cloud side parallelises, which is the usual case).
+   * We previously had a bulk-prefetch path here that fired one big
+   * `dv diff --base <commit>` (and later, parallel chunks) up front, but on
+   * 300+-file commits it forced the user to wait 30–60s before the file
+   * list even rendered. Lazy resolution is the right tradeoff — VS Code
+   * doesn't ask for content the user never views.
    */
-  async prefetchAtCommit(
-    commitId: string,
-    repoRoot: string,
-    dvPath: string | undefined,
-    files?: readonly string[],
-  ): Promise<void> {
-    const tStart = Date.now();
-
-    // Single-call path: small commit or caller couldn't supply a file list.
-    if (!files || files.length <= PREFETCH_CHUNK_SIZE) {
-      return this.prefetchSingleCall(commitId, repoRoot, dvPath, tStart);
-    }
-
-    // Chunked path: split files across N parallel `dv diff <paths…>` calls.
-    const chunks = chunkArray(files, PREFETCH_CHUNK_SIZE);
-    const results = await Promise.all(
-      chunks.map((chunk, i) => this.prefetchChunk(commitId, repoRoot, dvPath, chunk, i)),
-    );
-
-    let warmed = 0;
-    let cached = 0;
-    let bytes = 0;
-    let dvMsTotal = 0;
-    let total = 0;
-    for (const r of results) {
-      warmed += r.warmed;
-      cached += r.cached;
-      bytes += r.bytes;
-      dvMsTotal += r.dvMs;
-      total += r.total;
-    }
-    this.logger.info(
-      `[dv-commit] prefetch ${commitId} · ${chunks.length} chunk(s), ` +
-      `wall=${Date.now() - tStart}ms (sum-of-dv=${dvMsTotal}ms) · ` +
-      `${warmed} warmed, ${cached} already cached, ${total} total · ` +
-      `${(bytes / 1024).toFixed(1)}KB diff`,
-    );
-  }
-
-  private async prefetchSingleCall(
-    commitId: string,
-    repoRoot: string,
-    dvPath: string | undefined,
-    tStart: number,
-  ): Promise<void> {
-    let r;
-    try {
-      r = await runDv(
-        ['diff', '--color', 'never', '--base', commitId],
-        { cwd: repoRoot, dvPath, timeoutMs: 60_000 },
-      );
-    } catch (err) {
-      this.logger.warn(`[dv-commit] prefetch dv diff threw for ${commitId}: ${(err as Error).message}`);
-      return;
-    }
-    const tAfterDv = Date.now();
-    if (r.exitCode !== 0) {
-      this.logger.warn(`[dv-commit] prefetch dv diff exited ${r.exitCode} for ${commitId}`);
-      return;
-    }
-
-    const trimmed = r.stdout.trim();
-    if (!trimmed || /^no changes/i.test(trimmed)) {
-      this.logger.info(
-        `[dv-commit] prefetch ${commitId}: no diff vs workspace · ${tAfterDv - tStart}ms`,
-      );
-      return;
-    }
-
-    const perFile = splitMultiFileDiff(r.stdout);
-    let warmed = 0;
-    let cached = 0;
-    for (const [relPath, fileDiff] of perFile) {
-      const absPath = path.join(repoRoot, relPath);
-      const uri = commitContentUri(absPath, commitId);
-      const cacheKey = uri.toString();
-      if (this.memCache.has(cacheKey)) { cached++; continue; }
-
-      const promise = this.computeFromCachedDiff(absPath, commitId, relPath, fileDiff);
-      this.memCache.set(cacheKey, promise);
-      warmed++;
-    }
-    this.logger.info(
-      `[dv-commit] prefetch ${commitId} · dv=${tAfterDv - tStart}ms · ` +
-      `${warmed} warmed, ${cached} already cached, ${perFile.size} total · ` +
-      `${(r.stdout.length / 1024).toFixed(1)}KB diff`,
-    );
-  }
-
-  private async prefetchChunk(
-    commitId: string,
-    repoRoot: string,
-    dvPath: string | undefined,
-    paths: readonly string[],
-    chunkIndex: number,
-  ): Promise<{ warmed: number; cached: number; total: number; bytes: number; dvMs: number }> {
-    const tStart = Date.now();
-    let r;
-    try {
-      r = await runDv(
-        ['diff', '--color', 'never', '--base', commitId, ...paths],
-        { cwd: repoRoot, dvPath, timeoutMs: 60_000 },
-      );
-    } catch (err) {
-      this.logger.warn(
-        `[dv-commit] prefetch chunk #${chunkIndex} threw for ${commitId}: ${(err as Error).message}`,
-      );
-      return { warmed: 0, cached: 0, total: 0, bytes: 0, dvMs: Date.now() - tStart };
-    }
-    const dvMs = Date.now() - tStart;
-    if (r.exitCode !== 0) {
-      this.logger.warn(
-        `[dv-commit] prefetch chunk #${chunkIndex} exit ${r.exitCode} for ${commitId}`,
-      );
-      return { warmed: 0, cached: 0, total: 0, bytes: 0, dvMs };
-    }
-
-    const trimmed = r.stdout.trim();
-    if (!trimmed || /^no changes/i.test(trimmed)) {
-      return { warmed: 0, cached: 0, total: 0, bytes: r.stdout.length, dvMs };
-    }
-
-    const perFile = splitMultiFileDiff(r.stdout);
-    let warmed = 0;
-    let cached = 0;
-    for (const [relPath, fileDiff] of perFile) {
-      const absPath = path.join(repoRoot, relPath);
-      const uri = commitContentUri(absPath, commitId);
-      const cacheKey = uri.toString();
-      if (this.memCache.has(cacheKey)) { cached++; continue; }
-
-      const promise = this.computeFromCachedDiff(absPath, commitId, relPath, fileDiff);
-      this.memCache.set(cacheKey, promise);
-      warmed++;
-    }
-    return {
-      warmed,
-      cached,
-      total: perFile.size,
-      bytes: r.stdout.length,
-      dvMs,
-    };
-  }
-
-  private async computeFromCachedDiff(
-    absPath: string,
-    commitId: string,
-    relPath: string,
-    fileDiff: string,
-  ): Promise<string> {
-    // Try disk first — commits are immutable, so a hit means we can skip
-    // the read+reverse-apply entirely.
-    const persisted = await this.readFromDisk(commitId, relPath);
-    if (persisted !== undefined) return persisted;
-
-    if (await looksBinary(absPath)) return '';
-
-    let working: string;
-    try {
-      working = await fs.readFile(absPath, 'utf8');
-    } catch {
-      return '';
-    }
-
-    const diff = parseUnifiedDiff(fileDiff);
-    if (diff.binary) return '';
-    const at = reverseApply(working, diff) ?? '';
-    void this.writeToDisk(commitId, relPath, at);
-    return at;
-  }
 
   private async compute(uri: vscode.Uri): Promise<string> {
     const tStart = Date.now();
