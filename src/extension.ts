@@ -8,6 +8,7 @@ import { Repo } from './diversion/repo.js';
 import { readSettings } from './diversion/settings.js';
 import { DiversionScmProvider } from './scm/provider.js';
 import { QuickDiff, DV_SCHEME } from './scm/quickDiff.js';
+import { CommitContentProvider, DV_COMMIT_SCHEME } from './scm/commitContent.js';
 import { LockDecorationProvider } from './scm/lockDecorations.js';
 import { Blame } from './scm/blame.js';
 import { ShelvesTreeProvider, type ShelfNode } from './scm/shelvesView.js';
@@ -24,6 +25,7 @@ let quickDiff: QuickDiff | undefined;
 let lockDecorations: LockDecorationProvider | undefined;
 let blame: Blame | undefined;
 let shelvesProvider: ShelvesTreeProvider | undefined;
+let commitContent: CommitContentProvider | undefined;
 const providers = new Map<string, DiversionScmProvider>();
 let activationContext: vscode.ExtensionContext | undefined;
 
@@ -38,19 +40,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   for (const f of folders) log.info(`  • ${f.uri.fsPath}`);
 
   statusBar = new StatusBar(log);
-  quickDiff = new QuickDiff(
-    {
-      rootForPath: (fsPath: string) => {
-        for (const [root, p] of providers) {
-          if (fsPath.startsWith(root + '/') || fsPath === root) {
-            return { root, dvPath: p.repo.binaryPath };
-          }
+  const repoLookup = {
+    rootForPath: (fsPath: string) => {
+      for (const [root, p] of providers) {
+        if (fsPath.startsWith(root + '/') || fsPath === root) {
+          return { root, dvPath: p.repo.binaryPath };
         }
-        return undefined;
-      },
+      }
+      return undefined;
     },
-    log,
-  );
+  };
+  quickDiff = new QuickDiff(repoLookup, log);
+  commitContent = new CommitContentProvider(repoLookup, log);
 
   lockDecorations = new LockDecorationProvider(
     () => [...providers.values()].map((p) => p.repo),
@@ -73,9 +74,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     statusBar,
     quickDiff,
+    commitContent,
     lockDecorations,
     blame,
     vscode.workspace.registerTextDocumentContentProvider(DV_SCHEME, quickDiff),
+    vscode.workspace.registerTextDocumentContentProvider(DV_COMMIT_SCHEME, commitContent),
     vscode.window.registerFileDecorationProvider(lockDecorations),
     vscode.window.registerTreeDataProvider('diversion.shelves', shelvesProvider),
     { dispose: () => log.dispose() },
@@ -234,11 +237,14 @@ async function scanWorkspaceFolders(): Promise<void> {
       log.info(`Registered SCM provider for ${id.repoName} on ${id.branchName || '<unknown branch>'} (${id.commitId || '<no commit>'}) at ${fsPath}`);
 
       provider.scheduleRefresh(0);
-      const watcherDisposable = watchWorkspace(fsPath, () => {
+      const watcherDisposable = watchWorkspace(fsPath, (uri) => {
         provider.scheduleRefresh(settings.refreshDebounceMs);
         // Lock state can change as a side-effect of edits (auto-lock on
         // edit) — bust the cache and let decorations refresh too.
         void lockDecorations?.refresh();
+        // Working file changed → cached commit-content is stale because
+        // we anchor reverse-apply on the working contents.
+        commitContent?.invalidate(uri.fsPath);
       });
       activationContext?.subscriptions.push(watcherDisposable);
     } catch (err) {

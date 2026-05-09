@@ -1,5 +1,6 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
+import { commitContentUri } from './commitContent.js';
 import type { Repo } from '../diversion/repo.js';
 import type { Logger } from '../util/log.js';
 
@@ -145,16 +146,36 @@ export class DiversionHistoryProvider implements vscode.SourceControlHistoryProv
 
   async provideHistoryItemChanges(
     historyItemId: string,
-    _historyItemParentId: string | undefined,
+    historyItemParentId: string | undefined,
     _token: vscode.CancellationToken,
   ): Promise<vscode.SourceControlHistoryItemChange[]> {
     try {
       const changes = await this.repo.fileChangesForCommit(historyItemId);
-      return changes.map((c): vscode.SourceControlHistoryItemChange => ({
-        uri: vscode.Uri.file(path.join(this.repo.root, c.path)),
-        originalUri: undefined,
-        modifiedUri: undefined,
-      }));
+      // The "parent" for diff purposes is the linear predecessor — we
+      // reuse the parentId VS Code passes us if it's there, otherwise we
+      // omit originalUri (added/no-prior-version case).
+      return changes.map((c): vscode.SourceControlHistoryItemChange => {
+        const absPath = path.join(this.repo.root, c.path);
+        const fileUri = vscode.Uri.file(absPath);
+
+        // For "added" we have no parent version to show; for "deleted" we
+        // have no current version. Otherwise both sides resolve through
+        // the dv-commit: scheme.
+        const isAdded = c.kind === 'added';
+        const isDeleted = c.kind === 'deleted';
+        const original = !isAdded && historyItemParentId
+          ? commitContentUri(absPath, historyItemParentId)
+          : undefined;
+        const modified = !isDeleted
+          ? commitContentUri(absPath, historyItemId)
+          : undefined;
+
+        return {
+          uri: fileUri,
+          originalUri: original,
+          modifiedUri: modified,
+        };
+      });
     } catch (err) {
       this.logger.warn(`[history] provideHistoryItemChanges failed for ${historyItemId}: ${(err as Error).message}`);
       return [];
