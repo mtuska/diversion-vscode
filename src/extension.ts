@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { Logger } from './util/log.js';
 import { DaemonClient, DaemonUnavailableError } from './diversion/daemon.js';
-import { detectRepo, findDiversionRoot } from './diversion/detect.js';
+import { detectRepo } from './diversion/detect.js';
 import { Repo } from './diversion/repo.js';
 import { readSettings } from './diversion/settings.js';
 import { DiversionScmProvider } from './scm/provider.js';
@@ -37,14 +37,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const folders = vscode.workspace.workspaceFolders ?? [];
   log.info(`Diversion extension activating; ${folders.length} workspace folder(s):`);
   for (const f of folders) log.info(`  • ${f.uri.fsPath}`);
-  // Only auto-show the output channel when at least one folder appears to
-  // be Diversion-tracked (cheap fs.stat walk). Activation now fires on
-  // onStartupFinished too — opening a subdirectory of a Diversion repo
-  // works because we walk up to find `.diversion/` — but we don't want
-  // every VS Code window to surface our output channel uninvited.
-  if (await anyFolderInsideDiversionRepo(folders, log)) {
-    log.show();
-  }
+  // The output channel is created above and discoverable via the Output
+  // dropdown / `Diversion: Show Output` command, but we no longer auto-
+  // surface it on activation — it was useful during early development
+  // and noisy thereafter.
 
   statusBar = new StatusBar(log);
   const repoLookup = {
@@ -169,24 +165,6 @@ export function deactivate(): void {
   providers.clear();
   statusBar?.dispose();
   quickDiff?.dispose();
-}
-
-/**
- * Cheap pre-check before we run the full daemon health-check + scan: stat
- * `.diversion` walking up from each folder. Returns true if any folder is
- * inside a Diversion repo. Used to suppress the output channel in
- * unrelated VS Code windows now that activation fires on every startup.
- */
-async function anyFolderInsideDiversionRepo(
-  folders: readonly vscode.WorkspaceFolder[],
-  _log: Logger,
-): Promise<boolean> {
-  for (const folder of folders) {
-    if (folder.uri.scheme !== 'file') continue;
-    const root = await findDiversionRoot(folder.uri.fsPath);
-    if (root) return true;
-  }
-  return false;
 }
 
 async function healthCheck(log: Logger): Promise<void> {
