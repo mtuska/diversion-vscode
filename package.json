@@ -2,7 +2,7 @@
   "name": "diversion-vscode",
   "displayName": "Diversion",
   "description": "Source control integration for Diversion (https://www.diversion.dev) — register Diversion as a first-class SCM provider in VS Code.",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "publisher": "mtuska",
   "license": "Unlicense",
   "repository": {
@@ -273,9 +273,9 @@
         },
         "diversion.refresh.debounceMs": {
           "type": "number",
-          "default": 300,
-          "minimum": 50,
-          "description": "Debounce window for auto-refresh after file changes."
+          "default": 150,
+          "minimum": 0,
+          "description": "Debounce window (in milliseconds) for the filesystem-watcher-driven SCM refresh. Editor-originated events (save, create, delete, rename) bypass this and refresh immediately; this only governs external file changes (build outputs, format-on-save tools, git or dv operations from another process)."
         },
         "diversion.maxParallelProcesses": {
           "type": "number",

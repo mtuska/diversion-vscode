@@ -174,6 +174,25 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (s.focused) for (const p of providers.values()) p.scheduleRefresh(50);
     }),
     vscode.window.onDidChangeActiveTextEditor(() => updateStatusBar()),
+    // Direct editor events. These fire synchronously with the user
+    // action, ahead of `createFileSystemWatcher`, so the SCM panel
+    // reacts within a frame instead of waiting on the watcher's
+    // debounce + dv round trip.
+    vscode.workspace.onDidSaveTextDocument((doc) => {
+      onDocumentMutated(doc.uri);
+    }),
+    vscode.workspace.onDidCreateFiles((e) => {
+      for (const uri of e.files) onDocumentMutated(uri);
+    }),
+    vscode.workspace.onDidDeleteFiles((e) => {
+      for (const uri of e.files) onDocumentMutated(uri);
+    }),
+    vscode.workspace.onDidRenameFiles((e) => {
+      for (const f of e.files) {
+        onDocumentMutated(f.oldUri);
+        onDocumentMutated(f.newUri);
+      }
+    }),
   );
 
   if (providers.size === 0) {
@@ -1616,4 +1635,28 @@ function providerForUri(uri: vscode.Uri): DiversionScmProvider | undefined {
     if (isInsideOrEqual(root, uri.fsPath)) return p;
   }
   return undefined;
+}
+
+/**
+ * Common path for "the user just touched a file in the editor" events.
+ * Schedules an immediate SCM refresh, invalidates per-file caches,
+ * and nudges the local agent so its sync state catches up promptly.
+ *
+ * The FS watcher path still fires for the same change, but it lags
+ * VS Code's editor events and goes through a (configurable) debounce —
+ * routing editor-originated events here gives the SCM panel a within-
+ * a-frame response instead of waiting on the watcher.
+ */
+function onDocumentMutated(uri: vscode.Uri): void {
+  if (uri.scheme !== 'file') return;
+  const provider = providerForUri(uri);
+  if (!provider) return;
+  // Zero-debounce refresh: scheduleRefresh's coalescing + the in-flight
+  // queue in DiversionScmProvider.refresh() prevent dv-storming when
+  // the user saves rapidly.
+  provider.scheduleRefresh(0);
+  commitContent?.invalidate(uri.fsPath);
+  // Best-effort: wake the agent to re-scan so /sync reflects the new
+  // state without waiting on its own filesystem-watch poll.
+  void provider.repo.notifySyncRequired();
 }
