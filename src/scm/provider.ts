@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import type { Repo } from '../diversion/repo.js';
 import type { FileChange, ChangeKind } from '../diversion/types.js';
 import type { Logger } from '../util/log.js';
+import { DiversionHistoryProvider } from './historyProvider.js';
 
 const PROVIDER_ID = 'diversion';
 
@@ -27,6 +28,7 @@ export class DiversionScmProvider implements vscode.Disposable {
    */
   private readonly stagedPaths = new Set<string>();
   private readonly storageKey: string;
+  private history: DiversionHistoryProvider | undefined;
 
   private refreshTimer: NodeJS.Timeout | undefined;
   private inFlight: Promise<void> | undefined;
@@ -59,6 +61,20 @@ export class DiversionScmProvider implements vscode.Disposable {
 
     if (quickDiffProvider) {
       this.sc.quickDiffProvider = quickDiffProvider;
+    }
+
+    // Native Source Control Graph integration. Requires the proposed API
+    // `scmHistoryProvider` (declared in package.json's enabledApiProposals).
+    // We try-catch in case the runtime hasn't enabled the proposal — the
+    // graph view simply won't populate, but the rest of the provider still
+    // works. See historyProvider.ts for opt-in details.
+    try {
+      this.history = new DiversionHistoryProvider(this.repo, this.logger);
+      // The `historyProvider` property is added by the proposed API; cast
+      // through `any` so this still compiles when the proposal isn't loaded.
+      (this.sc as { historyProvider?: DiversionHistoryProvider }).historyProvider = this.history;
+    } catch (err) {
+      this.logger.warn(`[scm] history provider unavailable: ${(err as Error).message}`);
     }
 
     // Order matters — Conflicts first (must-act-on), then the git-style
@@ -124,8 +140,9 @@ export class DiversionScmProvider implements vscode.Disposable {
       const added: vscode.SourceControlResourceState[] = [];
 
       for (const change of state.changes) {
-        const rstate = toResourceState(this.repo.root, change);
-        if (this.stagedPaths.has(change.path)) {
+        const isStaged = this.stagedPaths.has(change.path);
+        const rstate = toResourceState(this.repo.root, change, isStaged);
+        if (isStaged) {
           staged.push(rstate);
         } else if (change.kind === 'added') {
           added.push(rstate);
@@ -151,6 +168,7 @@ export class DiversionScmProvider implements vscode.Disposable {
       this.groupNew.resourceStates = added;
       this.sc.count = conflicts.length + staged.length + modifiedDeleted.length + added.length;
       this.updateTitleButtons();
+      this.history?.notifyCurrentChanged();
       this.logger.debug(
         `[scm] refresh: ${conflicts.length} conflicts + ${staged.length} staged + ${modifiedDeleted.length} changes + ${added.length} new`,
       );
@@ -256,14 +274,18 @@ export class DiversionScmProvider implements vscode.Disposable {
 function toResourceState(
   root: string,
   change: FileChange,
+  isStaged: boolean,
 ): vscode.SourceControlResourceState {
   const uri = vscode.Uri.file(path.join(root, change.path));
+  // contextValue drives the inline / context-menu when-clauses in package.json.
+  // Encoding staged-vs-unstaged here (rather than relying on `scmResourceGroup`,
+  // which doesn't propagate to nested entries in tree view) means the
+  // stage/unstage buttons work correctly in both list and tree modes.
+  const contextValue = isStaged ? 'staged' : 'unstaged';
   return {
     resourceUri: uri,
     decorations: decorationsFor(change.kind),
-    contextValue: change.kind,
-    // Route every click through our own command — at click time we stat the
-    // path so directories open the explorer, files open the diff/editor.
+    contextValue,
     command: {
       command: 'diversion.openResource',
       title: 'Open',

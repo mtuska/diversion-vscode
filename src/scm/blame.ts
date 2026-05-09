@@ -73,23 +73,23 @@ export class Blame implements vscode.Disposable {
       editor.setDecorations(this.decoration, []);
       return;
     }
-    // Render the metadata only on the first line of each commit block —
-    // continuation lines get a hover-only decoration so the editor stays
-    // legible. A "block" is a contiguous run of lines that share commit ID.
+    // Render the metadata at the END of each contiguous same-commit block
+    // (matches GitLens / git-blame conventions). All other lines in the
+    // block keep just the hover tooltip.
     const decorations: vscode.DecorationOptions[] = [];
-    let prevCommit: string | undefined = '<none>';
-    for (const a of annotations) {
+    for (let i = 0; i < annotations.length; i++) {
+      const a = annotations[i]!;
       const lineIdx = a.lineNumber - 1;
       if (lineIdx < 0 || lineIdx >= editor.document.lineCount) continue;
       const range = editor.document.lineAt(lineIdx).range;
-      const isFirstOfBlock = a.commitId !== prevCommit;
-      prevCommit = a.commitId;
+      const next = annotations[i + 1];
+      const isLastOfBlock = !next || next.commitId !== a.commitId;
 
       const decoration: vscode.DecorationOptions = {
         range,
         hoverMessage: hoverFor(a),
       };
-      if (isFirstOfBlock) {
+      if (isLastOfBlock) {
         const text = a.uncommitted
           ? '⏵ uncommitted'
           : `⏵ ${a.author ?? '?'}${a.date ? ` · ${a.date}` : ''}${a.commitId ? ` · ${a.commitId}` : ''}`;

@@ -9,6 +9,21 @@ Source-control integration for [Diversion](https://www.diversion.dev) — regist
 - The `dv` CLI on your `PATH` (or set `diversion.path`).
 - A workspace cloned with `dv clone` or initialized with `dv init` (the extension activates on the presence of a `.diversion/` directory).
 - The Diversion daemon running locally (it is when `dv status` works).
+- VS Code 1.93 or newer.
+
+### Optional: enable the Source Control Graph view
+
+Diversion populates VS Code's built-in **Source Control Graph** view via
+the `scmHistoryProvider` proposed API. To use it you need to start VS Code
+with the proposed API enabled for this extension:
+
+```bash
+code --enable-proposed-api diversion.diversion-vscode
+```
+
+VS Code Insiders enables proposed APIs automatically. If the flag isn't
+set the rest of the extension still works — you just won't see the graph
+populate until the proposal stabilises and the flag becomes unnecessary.
 
 ## What this version does
 

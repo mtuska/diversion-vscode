@@ -14,7 +14,6 @@ import { ShelvesTreeProvider, type ShelfNode } from './scm/shelvesView.js';
 import { watchWorkspace } from './util/fsWatch.js';
 import { StatusBar } from './ui/statusBar.js';
 import { showLogWebview } from './ui/webviews/log.js';
-import { GraphWebview } from './ui/webviews/graph.js';
 import { looksBinary } from './util/binary.js';
 import { deleteSidecar } from './diversion/repo.js';
 import type { ChangeKind } from './diversion/types.js';
@@ -118,7 +117,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('diversion.verify', verifyCommand),
     vscode.commands.registerCommand('diversion.toggleBlame', () => blame?.toggle()),
     vscode.commands.registerCommand('diversion.daemonHealth', daemonHealthCommand),
-    vscode.commands.registerCommand('diversion.showGraph', showGraphCommand),
     vscode.commands.registerCommand('diversion.cherryPickCommit', cherryPickCommand),
     vscode.commands.registerCommand('diversion.revertCommit', revertCommitCommand),
     vscode.commands.registerCommand('diversion.revertToCommit', revertToCommitCommand),
@@ -301,7 +299,6 @@ async function moreActionsCommand(): Promise<void> {
     { label: '$(unlock) Unlock File', command: 'diversion.unlockFile' },
     { label: '$(list-tree) List Locks…', command: 'diversion.listLocks' },
     sep('View'),
-    { label: '$(git-commit) Show Graph', command: 'diversion.showGraph' },
     { label: '$(history) View History', command: 'diversion.viewHistory' },
     { label: '$(globe) Open in Web UI', command: 'diversion.openInWeb' },
     { label: '$(eye) Toggle Blame (Annotation)', command: 'diversion.toggleBlame' },
@@ -747,28 +744,6 @@ async function viewHistoryCommand(sourceControl?: vscode.SourceControl): Promise
     showLogWebview(provider.repo.info.repoName, commits);
   } catch (err) {
     void vscode.window.showErrorMessage(`Diversion: load history failed: ${(err as Error).message}`);
-  }
-}
-
-const graphWebviews = new Map<string, GraphWebview>();
-
-async function showGraphCommand(): Promise<void> {
-  const provider = activeProvider();
-  if (!provider) {
-    void vscode.window.showInformationMessage('Diversion: no active workspace.');
-    return;
-  }
-  const root = provider.repo.root;
-  let view = graphWebviews.get(root);
-  if (!view) {
-    view = new GraphWebview(provider.repo, logger!);
-    graphWebviews.set(root, view);
-    activationContext?.subscriptions.push(view);
-  }
-  try {
-    await view.show();
-  } catch (err) {
-    void vscode.window.showErrorMessage(`Diversion: graph failed: ${(err as Error).message}`);
   }
 }
 

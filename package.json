@@ -10,8 +10,11 @@
     "url": "https://github.com/diversion/diversion-vscode.git"
   },
   "engines": {
-    "vscode": "^1.80.0"
+    "vscode": "^1.93.0"
   },
+  "enabledApiProposals": [
+    "scmHistoryProvider"
+  ],
   "categories": [
     "SCM Providers"
   ],
@@ -183,12 +186,6 @@
         "category": "Diversion"
       },
       {
-        "command": "diversion.showGraph",
-        "title": "Show Graph",
-        "category": "Diversion",
-        "icon": "$(git-commit)"
-      },
-      {
         "command": "diversion.cherryPickCommit",
         "title": "Cherry-pick Commit",
         "category": "Diversion"
@@ -318,7 +315,6 @@
         { "command": "diversion.applyShelf", "when": "scmProvider == diversion", "group": "5_shelves@2" },
         { "command": "diversion.shelveAndSwitchBranch", "when": "scmProvider == diversion", "group": "5_shelves@3" },
 
-        { "command": "diversion.showGraph", "when": "scmProvider == diversion", "group": "5_view@1" },
         { "command": "diversion.viewHistory", "when": "scmProvider == diversion", "group": "5_view@2" },
         { "command": "diversion.openInWeb", "when": "scmProvider == diversion", "group": "5_view@3" },
         { "command": "diversion.toggleBlame", "when": "scmProvider == diversion", "group": "5_view@4" },
@@ -340,17 +336,17 @@
         },
         {
           "command": "diversion.discardChanges",
-          "when": "scmProvider == diversion && scmResourceState != conflict && scmResourceGroup != staged",
+          "when": "scmProvider == diversion && scmResourceState == unstaged",
           "group": "inline@2"
         },
         {
           "command": "diversion.stage",
-          "when": "scmProvider == diversion && (scmResourceGroup == changes || scmResourceGroup == new)",
+          "when": "scmProvider == diversion && scmResourceState == unstaged",
           "group": "inline@3"
         },
         {
           "command": "diversion.unstage",
-          "when": "scmProvider == diversion && scmResourceGroup == staged",
+          "when": "scmProvider == diversion && scmResourceState == staged",
           "group": "inline@3"
         },
         {
@@ -361,22 +357,22 @@
 
         {
           "command": "diversion.stage",
-          "when": "scmProvider == diversion && (scmResourceGroup == changes || scmResourceGroup == new)",
+          "when": "scmProvider == diversion && scmResourceState == unstaged",
           "group": "1_modification@1"
         },
         {
           "command": "diversion.unstage",
-          "when": "scmProvider == diversion && scmResourceGroup == staged",
+          "when": "scmProvider == diversion && scmResourceState == staged",
           "group": "1_modification@1"
         },
         {
           "command": "diversion.commitSelected",
-          "when": "scmProvider == diversion && scmResourceGroup != conflicts",
+          "when": "scmProvider == diversion && scmResourceState != conflict",
           "group": "1_modification@2"
         },
         {
           "command": "diversion.discardChanges",
-          "when": "scmProvider == diversion && scmResourceGroup != conflicts",
+          "when": "scmProvider == diversion && scmResourceState == unstaged",
           "group": "1_modification@3"
         }
       ],
@@ -444,7 +440,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
-    "@types/vscode": "^1.80.0",
+    "@types/vscode": "^1.93.0",
     "@vscode/vsce": "^2.27.0",
     "esbuild": "^0.21.5",
     "typescript": "^5.4.5",
