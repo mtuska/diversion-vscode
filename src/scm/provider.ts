@@ -233,10 +233,21 @@ export class DiversionScmProvider implements vscode.Disposable {
 
   /** All currently-changed workspace-relative paths from the last refresh. */
   private allChangedPaths(): string[] {
-    const out: string[] = [];
-    for (const r of this.groupStaged.resourceStates) out.push(this.relPath(r.resourceUri));
-    for (const r of this.groupChanges.resourceStates) out.push(this.relPath(r.resourceUri));
-    return out;
+    return this.getVisibleChangedPaths();
+  }
+
+  /**
+   * Workspace-relative paths of every change the SCM panel is currently
+   * displaying — i.e. after the open-folder filter has been applied.
+   * Callers that want to operate on "what the user can actually see"
+   * (commit, generate-commit-message, etc.) should use this instead of
+   * the full repo diff so we don't act on changes outside their scope.
+   */
+  getVisibleChangedPaths(): string[] {
+    const out = new Set<string>();
+    for (const r of this.groupStaged.resourceStates) out.add(this.relPath(r.resourceUri));
+    for (const r of this.groupChanges.resourceStates) out.add(this.relPath(r.resourceUri));
+    return [...out];
   }
 
   /** Paths the user has staged for the next commit. */

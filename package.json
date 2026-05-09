@@ -2,7 +2,7 @@
   "name": "diversion-vscode",
   "displayName": "Diversion",
   "description": "Source control integration for Diversion (https://www.diversion.dev) — register Diversion as a first-class SCM provider in VS Code.",
-  "version": "0.3.19",
+  "version": "0.3.20",
   "publisher": "mtuska",
   "license": "Unlicense",
   "repository": {
@@ -41,6 +41,13 @@
         "title": "Commit",
         "category": "Diversion",
         "icon": "$(check)"
+      },
+      {
+        "command": "diversion.generateCommitMessage",
+        "title": "Generate Commit Message",
+        "category": "Diversion",
+        "icon": "$(sparkle)",
+        "enablement": "scmProvider == diversion"
       },
       {
         "command": "diversion.commitSelected",
@@ -327,6 +334,9 @@
       "scm/title": [
         { "command": "diversion.commit", "when": "scmProvider == diversion", "group": "navigation@1" },
         { "command": "diversion.refresh", "when": "scmProvider == diversion", "group": "navigation@2" }
+      ],
+      "scm/inputBox": [
+        { "command": "diversion.generateCommitMessage", "when": "scmProvider == diversion", "group": "navigation@1" }
       ],
       "scm/sourceControl": [
         { "command": "diversion.commit", "when": "scmProvider == diversion", "group": "1_actions@1" },

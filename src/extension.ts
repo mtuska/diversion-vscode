@@ -107,6 +107,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     vscode.commands.registerCommand('diversion.refresh', refreshAllCommand),
     vscode.commands.registerCommand('diversion.commit', commitCommand),
+    vscode.commands.registerCommand('diversion.generateCommitMessage', generateCommitMessageCommand),
     vscode.commands.registerCommand('diversion.commitSelected', commitSelectedCommand),
     vscode.commands.registerCommand('diversion.stage', stageCommand),
     vscode.commands.registerCommand('diversion.unstage', unstageCommand),
@@ -743,6 +744,146 @@ async function markResolvedCommand(arg?: vscode.Uri | vscode.SourceControlResour
   } catch (err) {
     void vscode.window.showErrorMessage(`Diversion: delete sidecar failed: ${(err as Error).message}`);
   }
+}
+
+/**
+ * Sparkle button next to the commit message input: feeds the unified
+ * diff of the working tree (or just the staged paths) to a chat model
+ * via `vscode.lm` and writes the result back into the input box.
+ *
+ * We can't piggyback on the GitHub Copilot extension's own sparkle
+ * button — its menu contribution is gated on `scmProvider == git` —
+ * so we run our own command that talks to whatever language model the
+ * user has registered through `vscode.lm` (Copilot if they have it,
+ * any other compatible provider otherwise).
+ */
+async function generateCommitMessageCommand(sourceControl?: vscode.SourceControl): Promise<void> {
+  const provider = pickProvider(sourceControl);
+  if (!provider) return;
+
+  // Prefer Copilot models when available; fall back to whatever the
+  // user has so the feature still works for users who've installed a
+  // different `vscode.lm` provider.
+  let models: vscode.LanguageModelChat[] = [];
+  try {
+    models = await vscode.lm.selectChatModels({ vendor: 'copilot' });
+    if (models.length === 0) models = await vscode.lm.selectChatModels();
+  } catch (err) {
+    void vscode.window.showErrorMessage(
+      `Diversion: language model unavailable — ${(err as Error).message}`,
+    );
+    return;
+  }
+  if (models.length === 0) {
+    void vscode.window.showWarningMessage(
+      'Diversion: no chat model available. Install GitHub Copilot (or another vscode.lm provider) and sign in, then try again.',
+    );
+    return;
+  }
+  const model = models[0]!;
+
+  // Match the SCM panel's scope: if the user has staged paths, those win;
+  // otherwise, fall back to whatever the panel is *displaying* — i.e. the
+  // open-folder-filtered set, not the whole repo. Otherwise a user
+  // working in a sub-folder would get a commit message summarising
+  // changes elsewhere in the repo that they can't even see.
+  const staged = provider.getStagedPaths();
+  const scopePaths = staged.length > 0 ? staged : provider.getVisibleChangedPaths();
+  if (scopePaths.length === 0) {
+    void vscode.window.showWarningMessage(
+      'Diversion: nothing to summarise — no changes in the current scope.',
+    );
+    return;
+  }
+
+  let diff: string;
+  try {
+    diff = await provider.repo.unifiedDiff(scopePaths);
+  } catch (err) {
+    void vscode.window.showErrorMessage(
+      `Diversion: dv diff failed — ${(err as Error).message}`,
+    );
+    return;
+  }
+  diff = diff.trim();
+  if (!diff) {
+    void vscode.window.showWarningMessage(
+      'Diversion: nothing to summarise — the listed changes produced no diff content.',
+    );
+    return;
+  }
+
+  // Token budgets vary per model; ~100k chars is a safe ceiling that
+  // fits even small-context models and keeps the request snappy.
+  const MAX_DIFF_CHARS = 100_000;
+  let truncated = false;
+  if (diff.length > MAX_DIFF_CHARS) {
+    diff = diff.slice(0, MAX_DIFF_CHARS);
+    truncated = true;
+  }
+
+  const instructions = [
+    'You are writing a git commit message for the unified diff below. Output ONLY the message — no markdown fences, no preface, no quotes, no co-author lines, no trailing whitespace.',
+    '',
+    'FORMAT',
+    '1. Subject line: imperative mood, target ≤50 characters, hard limit 72. No trailing period. Use a Conventional Commits prefix when one fits: feat, fix, refactor, perf, docs, test, build, ci, chore — with a parenthesised scope when the change clearly touches one area, e.g. `feat(scope): tighten X`.',
+    '2. Blank line separating subject and body.',
+    '3. Body (only when it adds value): wrap every line at 72 columns. Explain *why* the change is being made when the diff makes the *what* obvious.',
+    '',
+    'BODY HYGIENE',
+    '- Use `- ` bullet points when listing multiple distinct changes. Never write run-on prose like "Also: ..., ..., ...".',
+    '- One idea per paragraph; one item per bullet.',
+    '- If the diff bundles clearly unrelated tracks of work, group them under short sub-headings (e.g. a header line ending in `:` followed by bullets) instead of merging them into a single paragraph.',
+    '- Skip the body entirely when the subject already conveys everything.',
+    '- Prefer specific verbs over vague ones ("rewrite" over "update", "drop" over "change", "scope to" over "limit").',
+    '- Do not restate filenames the diff already shows; describe the user-visible behaviour or the engineering rationale.',
+  ].join('\n');
+
+  const scopeLabel = staged.length > 0
+    ? `${staged.length} staged path(s)`
+    : `${scopePaths.length} change(s) in current view`;
+  const userPrompt =
+    `${instructions}\n\n` +
+    `Scope: ${scopeLabel}${truncated ? ' (diff truncated)' : ''}\n\n` +
+    '```diff\n' + diff + '\n```';
+
+  const messages = [vscode.LanguageModelChatMessage.User(userPrompt)];
+
+  await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.SourceControl, title: 'dv: generating commit message' },
+    async (_, token) => {
+      try {
+        const response = await model.sendRequest(messages, {}, token);
+        let buf = '';
+        for await (const chunk of response.text) {
+          if (token.isCancellationRequested) return;
+          buf += chunk;
+          // Stream into the input box so the user sees the message as
+          // it arrives, the same affordance Copilot's git button gives.
+          provider.sourceControl.inputBox.value = stripCodeFence(buf).trimStart();
+        }
+      } catch (err) {
+        if (token.isCancellationRequested) return;
+        void vscode.window.showErrorMessage(
+          `Diversion: commit-message generation failed — ${(err as Error).message}`,
+        );
+      }
+    },
+  );
+}
+
+/**
+ * Some models still wrap their output in a ```...``` fence even when
+ * told not to. Strip the leading fence (with optional language tag)
+ * and a trailing fence so the input box stays clean.
+ */
+function stripCodeFence(text: string): string {
+  const trimmed = text.trimStart();
+  const fenceMatch = /^```[^\n]*\n?/.exec(trimmed);
+  if (!fenceMatch) return text;
+  let stripped = trimmed.slice(fenceMatch[0].length);
+  stripped = stripped.replace(/\n?```\s*$/, '');
+  return stripped;
 }
 
 async function commitCommand(sourceControl?: vscode.SourceControl): Promise<void> {

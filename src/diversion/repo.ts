@@ -167,6 +167,18 @@ export class Repo {
     await runDvOrThrow(args, { cwd: this.root, dvPath: this.dvPath, timeoutMs: 0 });
   }
 
+  /**
+   * Full unified diff of the working tree against the base commit. If
+   * `paths` is provided the diff is scoped to just those paths, matching
+   * how `dv commit <paths>` is scoped. Used by the "generate commit
+   * message" feature to feed an LLM only the relevant patch.
+   */
+  async unifiedDiff(paths?: readonly string[]): Promise<string> {
+    const args = ['diff', '--color', 'never', ...(paths && paths.length > 0 ? paths : [])];
+    const r = await runDvOrThrow(args, { cwd: this.root, dvPath: this.dvPath, timeoutMs: 60_000 });
+    return r.stdout;
+  }
+
   async discardPath(path: string): Promise<void> {
     // `-f` skips the interactive confirmation dv otherwise waits on. Without
     // it `dv reset <path>` blocks indefinitely when run without a TTY (which
