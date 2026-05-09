@@ -2,7 +2,7 @@
   "name": "diversion-vscode",
   "displayName": "Diversion",
   "description": "Source control integration for Diversion (https://www.diversion.dev) — register Diversion as a first-class SCM provider in VS Code.",
-  "version": "0.3.21",
+  "version": "0.3.22",
   "publisher": "mtuska",
   "license": "Unlicense",
   "repository": {
@@ -418,6 +418,38 @@
         {
           "command": "diversion.discardChanges",
           "when": "scmProvider == diversion && scmResourceState =~ /^unstaged-/",
+          "group": "1_modification@3"
+        }
+      ],
+      "scm/resourceFolder/context": [
+        {
+          "command": "diversion.discardChanges",
+          "when": "scmProvider == diversion && scmResourceGroup == changes",
+          "group": "inline@2"
+        },
+        {
+          "command": "diversion.stage",
+          "when": "scmProvider == diversion && scmResourceGroup == changes",
+          "group": "inline@3"
+        },
+        {
+          "command": "diversion.unstage",
+          "when": "scmProvider == diversion && scmResourceGroup == staged",
+          "group": "inline@3"
+        },
+        {
+          "command": "diversion.stage",
+          "when": "scmProvider == diversion && scmResourceGroup == changes",
+          "group": "1_modification@1"
+        },
+        {
+          "command": "diversion.unstage",
+          "when": "scmProvider == diversion && scmResourceGroup == staged",
+          "group": "1_modification@1"
+        },
+        {
+          "command": "diversion.discardChanges",
+          "when": "scmProvider == diversion && scmResourceGroup == changes",
           "group": "1_modification@3"
         }
       ],

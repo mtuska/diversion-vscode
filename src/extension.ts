@@ -943,28 +943,104 @@ function relForResource(provider: DiversionScmProvider, uri: vscode.Uri): string
   return path.relative(provider.repo.root, uri.fsPath).replace(/\\/g, '/');
 }
 
-async function stageCommand(...resources: vscode.SourceControlResourceState[]): Promise<void> {
-  await routeStaging(resources, (provider, paths) => provider.stage(paths));
-}
-
-async function unstageCommand(...resources: vscode.SourceControlResourceState[]): Promise<void> {
-  await routeStaging(resources, (provider, paths) => provider.unstage(paths));
-}
-
-async function routeStaging(
-  resources: vscode.SourceControlResourceState[],
-  apply: (provider: DiversionScmProvider, paths: string[]) => void,
-): Promise<void> {
-  if (resources.length === 0) return;
-  const byProvider = new Map<DiversionScmProvider, string[]>();
-  for (const r of resources) {
-    const provider = providerForUri(r.resourceUri);
-    if (!provider) continue;
-    const arr = byProvider.get(provider) ?? [];
-    arr.push(relForResource(provider, r.resourceUri));
-    byProvider.set(provider, arr);
+async function stageCommand(...args: unknown[]): Promise<void> {
+  const byProvider = resolveResourceStates(args, 'changes');
+  for (const [provider, states] of byProvider) {
+    if (states.length === 0) continue;
+    provider.stage(states.map((s) => relForResource(provider, s.resourceUri)));
   }
-  for (const [provider, paths] of byProvider) apply(provider, paths);
+}
+
+async function unstageCommand(...args: unknown[]): Promise<void> {
+  const byProvider = resolveResourceStates(args, 'staged');
+  for (const [provider, states] of byProvider) {
+    if (states.length === 0) continue;
+    provider.unstage(states.map((s) => relForResource(provider, s.resourceUri)));
+  }
+}
+
+/**
+ * Resolve whatever VS Code hands a context-menu command into a
+ * concrete `Map<provider, SourceControlResourceState[]>`. Handles all
+ * three SCM menu surfaces:
+ *
+ *   - `scm/resourceState/context` — `SourceControlResourceState` per row
+ *   - `scm/resourceFolder/context` — a folder `Uri` (tree view); expands
+ *     to every file currently displayed under that folder
+ *   - `scm/resourceGroup/context` — a group; enumerates `resourceStates`
+ *
+ * `originGroup` filters the expansion so a "stage" on a folder under
+ * the staged group is a no-op rather than re-staging staged files.
+ */
+function resolveResourceStates(
+  args: readonly unknown[],
+  originGroup: 'changes' | 'staged',
+): Map<DiversionScmProvider, vscode.SourceControlResourceState[]> {
+  const byProvider = new Map<DiversionScmProvider, vscode.SourceControlResourceState[]>();
+  const seen = new Map<DiversionScmProvider, Set<string>>();
+  const push = (provider: DiversionScmProvider, state: vscode.SourceControlResourceState): void => {
+    const key = state.resourceUri.fsPath;
+    const set = seen.get(provider) ?? new Set<string>();
+    if (set.has(key)) return;
+    set.add(key); seen.set(provider, set);
+    const arr = byProvider.get(provider) ?? [];
+    arr.push(state);
+    byProvider.set(provider, arr);
+  };
+
+  for (const arg of args) {
+    if (!arg) continue;
+    if (isResourceState(arg)) {
+      const provider = providerForUri(arg.resourceUri);
+      if (provider) push(provider, arg);
+      continue;
+    }
+    if (arg instanceof vscode.Uri) {
+      const provider = providerForUri(arg);
+      if (!provider) continue;
+      for (const state of statesUnder(provider, arg, originGroup)) push(provider, state);
+      continue;
+    }
+    if (isResourceGroup(arg)) {
+      for (const rs of arg.resourceStates) {
+        const provider = providerForUri(rs.resourceUri);
+        if (provider) push(provider, rs);
+      }
+      continue;
+    }
+  }
+  return byProvider;
+}
+
+function isResourceState(arg: unknown): arg is vscode.SourceControlResourceState {
+  return typeof arg === 'object' && arg !== null
+    && 'resourceUri' in arg
+    && (arg as { resourceUri: unknown }).resourceUri instanceof vscode.Uri;
+}
+
+function isResourceGroup(arg: unknown): arg is vscode.SourceControlResourceGroup {
+  return typeof arg === 'object' && arg !== null
+    && 'resourceStates' in arg
+    && Array.isArray((arg as { resourceStates: unknown }).resourceStates);
+}
+
+/**
+ * Resource states from `provider` whose URI is at or underneath
+ * `folderUri`, scoped to the `group` the action originated from.
+ * Used to expand folder-row staging / discard actions into the
+ * concrete file list the underlying command needs.
+ */
+function statesUnder(
+  provider: DiversionScmProvider,
+  folderUri: vscode.Uri,
+  group: 'changes' | 'staged',
+): vscode.SourceControlResourceState[] {
+  const folder = folderUri.fsPath;
+  const out: vscode.SourceControlResourceState[] = [];
+  for (const state of provider.getResourceStates(group)) {
+    if (isInsideOrEqual(folder, state.resourceUri.fsPath)) out.push(state);
+  }
+  return out;
 }
 
 async function stageAllCommand(sourceControl?: vscode.SourceControl): Promise<void> {
@@ -1089,16 +1165,23 @@ async function openResourceCommand(uri: vscode.Uri, kind?: ChangeKind): Promise<
   await vscode.commands.executeCommand('vscode.open', uri);
 }
 
-async function discardChangesCommand(...resources: vscode.SourceControlResourceState[]): Promise<void> {
-  if (resources.length === 0) return;
+async function discardChangesCommand(...args: unknown[]): Promise<void> {
+  // Discard only ever runs against unstaged ("changes") rows — staged
+  // entries route through unstage first. Expand folder/group args here
+  // so a discard click on a tree-view folder catches every file under it.
+  const byProvider = resolveResourceStates(args, 'changes');
+  const flatResources: vscode.SourceControlResourceState[] = [];
+  for (const states of byProvider.values()) flatResources.push(...states);
+  if (flatResources.length === 0) return;
+
   const confirm = await vscode.window.showWarningMessage(
-    `Discard ${resources.length} file(s)? This cannot be undone.`,
+    `Discard ${flatResources.length} file(s)? This cannot be undone.`,
     { modal: true }, 'Discard',
   );
   if (confirm !== 'Discard') return;
 
   const touched = new Set<DiversionScmProvider>();
-  for (const r of resources) {
+  for (const r of flatResources) {
     const provider = providerForUri(r.resourceUri);
     if (!provider) continue;
     try {

@@ -55,6 +55,13 @@ export class LockDecorationProvider implements vscode.FileDecorationProvider, vs
     }
     return {
       badge: '🔒',
+      // Tint locked files so they're distinguishable at a glance even
+      // when other decorations (M/A/D badges in SCM, the emoji is
+      // also small) would otherwise dominate. `errorForeground` is
+      // the closest semantic match — locked = "you cannot modify this
+      // right now" — and reads well in both the explorer and the SCM
+      // resource list.
+      color: new vscode.ThemeColor('errorForeground'),
       tooltip: holder ? `Locked by ${holder}` : 'Locked',
       propagate: false,
     };

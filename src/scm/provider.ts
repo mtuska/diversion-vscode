@@ -264,6 +264,20 @@ export class DiversionScmProvider implements vscode.Disposable {
     return [...out];
   }
 
+  /**
+   * Live resource states from one of the SCM groups, used by
+   * folder-row context-menu commands to expand a clicked folder into
+   * the concrete files the underlying action needs (with their full
+   * `contextValue`/`command` metadata intact).
+   */
+  getResourceStates(group: 'changes' | 'staged' | 'conflicts'): readonly vscode.SourceControlResourceState[] {
+    switch (group) {
+      case 'changes': return this.groupChanges.resourceStates;
+      case 'staged': return this.groupStaged.resourceStates;
+      case 'conflicts': return this.groupConflicts.resourceStates;
+    }
+  }
+
   /** Paths the user has staged for the next commit. */
   getStagedPaths(): string[] {
     return [...this.stagedPaths];
