@@ -247,13 +247,12 @@ async function scanWorkspaceFolders(): Promise<void> {
   const daemon = new DaemonClient(settings.daemonUrl ? { baseUrl: settings.daemonUrl } : {});
   const folders = vscode.workspace.workspaceFolders ?? [];
 
-  // The providers map is keyed by the actual *repo root* (the directory
-  // that contains `.diversion/`), not by the workspace folder path. This
-  // matters when the user opens a sub-directory of a repo: detectRepo
-  // walks up to find the marker, and we want to register exactly one
-  // provider per repo even if the user has multiple folders of the same
-  // repo open simultaneously.
-  const seenRoots = new Set<string>();
+  // Group VS Code workspace folders by the Diversion repo root they live
+  // inside (or are equal to). The providers map is keyed by repo root,
+  // not folder path: opening multiple sub-folders of the same repo
+  // registers exactly one provider, and that provider gets the union of
+  // all open folders so it can filter its SCM display to just those.
+  const foldersByRoot = new Map<string, { id: import('./diversion/types.js').RepoIdentity; folders: string[] }>();
 
   for (const folder of folders) {
     if (folder.uri.scheme !== 'file') continue;
@@ -272,15 +271,24 @@ async function scanWorkspaceFolders(): Promise<void> {
     }
 
     const root = id.workspacePath;
-    seenRoots.add(root);
+    const entry = foldersByRoot.get(root);
+    if (entry) {
+      if (!entry.folders.includes(folderPath)) entry.folders.push(folderPath);
+    } else {
+      foldersByRoot.set(root, { id, folders: [folderPath] });
+    }
+  }
 
-    if (!providers.has(root)) {
+  for (const [root, { id, folders: openFolders }] of foldersByRoot) {
+    let provider = providers.get(root);
+    if (!provider) {
       const repo = new Repo(daemon, id, settings.dvPath, log);
-      const provider = new DiversionScmProvider(
+      provider = new DiversionScmProvider(
         repo, log, activationContext!.workspaceState, quickDiff, commitContent,
       );
       providers.set(root, provider);
-      const note = folderPath === root ? '' : ` [open folder: ${folderPath}]`;
+      const sample = openFolders[0] ?? root;
+      const note = sample === root ? '' : ` [open folder: ${sample}${openFolders.length > 1 ? ` +${openFolders.length - 1} more` : ''}]`;
       log.info(
         `Registered SCM provider for ${id.repoName} on ${id.branchName || '<unknown>'} ` +
         `(${id.commitId || '<no commit>'}) at ${root}${note}`,
@@ -288,25 +296,28 @@ async function scanWorkspaceFolders(): Promise<void> {
       provider.scheduleRefresh(0);
     }
 
-    // Each open folder gets its own file-system watcher so VS Code's
-    // workspace-folder-scoped FS event delivery still works for sub-dir
-    // opens. They all feed the same provider — refresh fires regardless
-    // of which folder the change came from.
-    const provider = providers.get(root)!;
-    const watcherDisposable = watchWorkspace(folderPath, (uri) => {
-      provider.scheduleRefresh(settings.refreshDebounceMs);
-      // Lock state can change as a side-effect of edits (auto-lock on
-      // edit) — bust the cache and let decorations refresh too.
-      void lockDecorations?.refresh();
-      // Working file changed → cached commit-content is stale because
-      // we anchor reverse-apply on the working contents.
-      commitContent?.invalidate(uri.fsPath);
-    });
-    activationContext?.subscriptions.push(watcherDisposable);
+    // Tell the provider which folders are open under it, so the SCM panel
+    // can filter its display. If the user opened the repo root itself,
+    // pass that — the provider treats "root in openFolders" as "no filter".
+    // The setting below lets users override and always see the full repo.
+    const showAll = settings.scmShowAllRepoChanges;
+    provider.setOpenFolders(showAll ? [root] : openFolders);
+
+    // One watcher per open folder so VS Code's workspace-folder-scoped FS
+    // event delivery still works for sub-dir opens. They all feed the same
+    // provider — refresh fires regardless of which folder the change came from.
+    for (const folderPath of openFolders) {
+      const watcherDisposable = watchWorkspace(folderPath, (uri) => {
+        provider!.scheduleRefresh(settings.refreshDebounceMs);
+        void lockDecorations?.refresh();
+        commitContent?.invalidate(uri.fsPath);
+      });
+      activationContext?.subscriptions.push(watcherDisposable);
+    }
   }
 
   for (const [key, provider] of [...providers.entries()]) {
-    if (!seenRoots.has(key)) {
+    if (!foldersByRoot.has(key)) {
       provider.dispose();
       providers.delete(key);
       log.info(`Removed SCM provider for ${key}`);

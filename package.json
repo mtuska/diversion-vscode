@@ -2,7 +2,7 @@
   "name": "diversion-vscode",
   "displayName": "Diversion",
   "description": "Source control integration for Diversion (https://www.diversion.dev) — register Diversion as a first-class SCM provider in VS Code.",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "publisher": "mtuska",
   "license": "Unlicense",
   "repository": {
@@ -270,6 +270,11 @@
           "items": { "type": "string" },
           "default": [],
           "description": "Additional file extensions (with leading dot, e.g. \".uplugin\") to treat as binary on top of the built-in list. Binary files skip the side-by-side diff view and open directly."
+        },
+        "diversion.scm.showAllRepoChanges": {
+          "type": "boolean",
+          "default": false,
+          "description": "When opening a sub-directory of a Diversion repo, the SCM panel only shows changes inside the open folder(s) by default. Enable this to see ALL changes in the repo regardless of which folder you opened."
         },
         "diversion.log.level": {
           "type": "string",

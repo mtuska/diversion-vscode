@@ -4,6 +4,7 @@ export interface DvSettings {
   dvPath: string | undefined;
   daemonUrl: string | undefined;
   refreshDebounceMs: number;
+  scmShowAllRepoChanges: boolean;
 }
 
 export function readSettings(): DvSettings {
@@ -14,5 +15,6 @@ export function readSettings(): DvSettings {
     dvPath: dvPath || undefined,
     daemonUrl: daemonUrl || undefined,
     refreshDebounceMs: Math.max(50, cfg.get<number>('refresh.debounceMs', 300)),
+    scmShowAllRepoChanges: cfg.get<boolean>('scm.showAllRepoChanges', false),
   };
 }

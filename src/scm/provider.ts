@@ -5,6 +5,7 @@ import type { FileChange, ChangeKind } from '../diversion/types.js';
 import type { Logger } from '../util/log.js';
 import { DiversionHistoryProvider } from './historyProvider.js';
 import type { CommitContentProvider } from './commitContent.js';
+import { isInsideOrEqual } from '../util/path.js';
 
 const PROVIDER_ID = 'diversion';
 
@@ -30,6 +31,16 @@ export class DiversionScmProvider implements vscode.Disposable {
   private readonly stagedPaths = new Set<string>();
   private readonly storageKey: string;
   private history: DiversionHistoryProvider | undefined;
+
+  /**
+   * Absolute filesystem paths of workspace folders the user has open that
+   * resolve to this repo. When non-empty AND none of them equals the repo
+   * root, SCM display is filtered to changes inside one of these folders —
+   * so opening `Prototypes/Documentation/` shows only `Documentation/*`
+   * changes even though the provider is rooted at `Prototypes/`. Empty (or
+   * containing the repo root) means "show all changes".
+   */
+  private openFolders: string[] = [];
 
   private refreshTimer: NodeJS.Timeout | undefined;
   private inFlight: Promise<void> | undefined;
@@ -96,6 +107,33 @@ export class DiversionScmProvider implements vscode.Disposable {
   get sourceControl(): vscode.SourceControl { return this.sc; }
   get root(): string { return this.repo.root; }
 
+  /**
+   * Tell the provider which absolute folder paths the user has open that
+   * map to this repo. The provider filters its visible change list to those
+   * folders. Pass an empty array (or one that includes the repo root) to
+   * disable filtering.
+   */
+  setOpenFolders(folders: readonly string[]): void {
+    const next = [...folders];
+    const a = this.openFolders.slice().sort();
+    const b = next.slice().sort();
+    if (a.length === b.length && a.every((v, i) => v === b[i])) return;
+    this.openFolders = next;
+    this.scheduleRefresh(0);
+  }
+
+  /** True when the configured filter would hide a path. */
+  private isPathVisible(relPath: string): boolean {
+    if (this.openFolders.length === 0) return true;
+    // If any open folder IS the repo root, no filtering.
+    if (this.openFolders.some((f) => f === this.repo.root)) return true;
+    const abs = path.join(this.repo.root, relPath);
+    for (const folder of this.openFolders) {
+      if (isInsideOrEqual(folder, abs)) return true;
+    }
+    return false;
+  }
+
   /** Schedule a refresh; coalesces rapid successive calls via debounce. */
   scheduleRefresh(debounceMs: number): void {
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
@@ -141,7 +179,9 @@ export class DiversionScmProvider implements vscode.Disposable {
       const modifiedDeleted: vscode.SourceControlResourceState[] = [];
       const added: vscode.SourceControlResourceState[] = [];
 
+      let hidden = 0;
       for (const change of state.changes) {
+        if (!this.isPathVisible(change.path)) { hidden++; continue; }
         const isStaged = this.stagedPaths.has(change.path);
         const rstate = toResourceState(this.repo.root, change, isStaged);
         if (isStaged) {
@@ -153,16 +193,21 @@ export class DiversionScmProvider implements vscode.Disposable {
         }
       }
 
-      const conflicts: vscode.SourceControlResourceState[] = state.conflicts.map((c) => ({
-        resourceUri: vscode.Uri.file(c.originalPath),
-        decorations: { tooltip: `Sync conflict — local copy at ${c.sidecarPath}` },
-        contextValue: 'conflict',
-        command: {
-          command: 'diversion.resolveConflict',
-          title: 'Resolve',
-          arguments: [vscode.Uri.file(c.originalPath), vscode.Uri.file(c.sidecarPath)],
-        },
-      }));
+      const conflicts: vscode.SourceControlResourceState[] = [];
+      for (const c of state.conflicts) {
+        const rel = path.relative(this.repo.root, c.originalPath);
+        if (!this.isPathVisible(rel)) { hidden++; continue; }
+        conflicts.push({
+          resourceUri: vscode.Uri.file(c.originalPath),
+          decorations: { tooltip: `Sync conflict — local copy at ${c.sidecarPath}` },
+          contextValue: 'conflict',
+          command: {
+            command: 'diversion.resolveConflict',
+            title: 'Resolve',
+            arguments: [vscode.Uri.file(c.originalPath), vscode.Uri.file(c.sidecarPath)],
+          },
+        });
+      }
 
       this.groupConflicts.resourceStates = conflicts;
       this.groupStaged.resourceStates = staged;
@@ -171,8 +216,11 @@ export class DiversionScmProvider implements vscode.Disposable {
       this.sc.count = conflicts.length + staged.length + modifiedDeleted.length + added.length;
       this.updateTitleButtons();
       this.history?.notifyCurrentChanged();
+      const filterNote = this.openFolders.length > 0 && hidden > 0
+        ? ` (${hidden} hidden by open-folder filter: ${this.openFolders.join(', ')})`
+        : '';
       this.logger.debug(
-        `[scm] refresh: ${conflicts.length} conflicts + ${staged.length} staged + ${modifiedDeleted.length} changes + ${added.length} new`,
+        `[scm] refresh: ${conflicts.length} conflicts + ${staged.length} staged + ${modifiedDeleted.length} changes + ${added.length} new${filterNote}`,
       );
     } catch (err) {
       this.logger.error(`[scm] refresh failed for ${this.repo.root}`, err);
