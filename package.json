@@ -186,6 +186,11 @@
         "category": "Diversion"
       },
       {
+        "command": "diversion.perfTrace",
+        "title": "Run Performance Trace",
+        "category": "Diversion"
+      },
+      {
         "command": "diversion.cherryPickCommit",
         "title": "Cherry-pick Commit",
         "category": "Diversion"
@@ -320,7 +325,8 @@
         { "command": "diversion.toggleBlame", "when": "scmProvider == diversion", "group": "5_view@4" },
         { "command": "diversion.verify", "when": "scmProvider == diversion", "group": "5_view@5" },
         { "command": "diversion.daemonHealth", "when": "scmProvider == diversion", "group": "5_view@6" },
-        { "command": "diversion.showOutput", "when": "scmProvider == diversion", "group": "5_view@7" }
+        { "command": "diversion.perfTrace", "when": "scmProvider == diversion", "group": "5_view@7" },
+        { "command": "diversion.showOutput", "when": "scmProvider == diversion", "group": "5_view@8" }
       ],
       "scm/resourceState/context": [
         {

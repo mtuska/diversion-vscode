@@ -97,8 +97,14 @@ export class DiversionHistoryProvider implements vscode.SourceControlHistoryProv
     const skip = options.skip ?? 0;
     const fetch = limit + skip;
 
+    const tStart = Date.now();
     try {
       const commits = await this.repo.logFull(fetch);
+      const tAfterLog = Date.now();
+      this.logger.info(
+        `[history] provideHistoryItems(limit=${limit}, skip=${skip}) · ` +
+        `dv log=${tAfterLog - tStart}ms (${commits.length} commit(s))`
+      );
       const sliced = commits.slice(skip, skip + limit);
 
       // Pre-compute branch refs by tip-commit so we can attach them to the
@@ -149,8 +155,13 @@ export class DiversionHistoryProvider implements vscode.SourceControlHistoryProv
     historyItemParentId: string | undefined,
     _token: vscode.CancellationToken,
   ): Promise<vscode.SourceControlHistoryItemChange[]> {
+    const tStart = Date.now();
     try {
       const changes = await this.repo.fileChangesForCommit(historyItemId);
+      this.logger.info(
+        `[history] provideHistoryItemChanges(${historyItemId}) · ` +
+        `dv show=${Date.now() - tStart}ms (${changes.length} file(s))`
+      );
       // The "parent" for diff purposes is the linear predecessor — we
       // reuse the parentId VS Code passes us if it's there, otherwise we
       // omit originalUri (added/no-prior-version case).

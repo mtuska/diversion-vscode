@@ -83,6 +83,7 @@ export class CommitContentProvider implements vscode.TextDocumentContentProvider
   }
 
   private async compute(uri: vscode.Uri): Promise<string> {
+    const tStart = Date.now();
     if (uri.scheme !== DV_COMMIT_SCHEME) return '';
     const params = new URLSearchParams(uri.query);
     const commitId = params.get('commit');
@@ -106,12 +107,14 @@ export class CommitContentProvider implements vscode.TextDocumentContentProvider
       // apply without an anchor — return empty.
       return '';
     }
+    const tAfterRead = Date.now();
 
     const relPath = path.relative(lookup.root, fsPath);
     const r = await runDv(
       ['diff', '--color', 'never', '--base', commitId, relPath || fsPath],
       { cwd: lookup.root, dvPath: lookup.dvPath, timeoutMs: 30_000 },
     );
+    const tAfterDv = Date.now();
     if (r.exitCode !== 0) {
       this.logger.warn(`[dv-commit] dv diff exited ${r.exitCode} for ${commitId} ${relPath}`);
       return '';
@@ -120,13 +123,22 @@ export class CommitContentProvider implements vscode.TextDocumentContentProvider
     const stdout = r.stdout;
     const trimmed = stdout.trim();
     if (!trimmed || /^no changes/i.test(trimmed)) {
-      // File is identical at <commit> and workspace.
+      this.logger.info(
+        `[dv-commit] ${commitId} ${relPath} unchanged · ` +
+        `total=${Date.now() - tStart}ms (dv=${tAfterDv - tAfterRead}ms)`
+      );
       return working;
     }
     const diff = parseUnifiedDiff(stdout);
     if (diff.binary) return '';
 
     const at = reverseApply(working, diff);
+    const total = Date.now() - tStart;
+    this.logger.info(
+      `[dv-commit] ${commitId} ${relPath} · total=${total}ms ` +
+      `(read=${tAfterRead - tStart}ms, dv=${tAfterDv - tAfterRead}ms, ` +
+      `parse+apply=${Date.now() - tAfterDv}ms, dv-bytes=${stdout.length})`
+    );
     return at ?? '';
   }
 

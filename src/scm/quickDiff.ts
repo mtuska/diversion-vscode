@@ -87,6 +87,7 @@ export class QuickDiff implements vscode.QuickDiffProvider, vscode.TextDocumentC
   }
 
   private async _doProvide(uri: vscode.Uri): Promise<string> {
+    const tStart = Date.now();
     this.logger.info(`[QuickDiff] provideTextDocumentContent ${uri.toString()}`);
     if (uri.scheme !== DV_SCHEME) return '';
 
@@ -109,6 +110,7 @@ export class QuickDiff implements vscode.QuickDiffProvider, vscode.TextDocumentC
       return '';
     }
 
+    const tBeforeRead = Date.now();
     let working = '';
     try {
       working = await fs.readFile(uri.fsPath, 'utf8');
@@ -116,6 +118,7 @@ export class QuickDiff implements vscode.QuickDiffProvider, vscode.TextDocumentC
       // File deleted or new — empty base.
       return '';
     }
+    const tAfterRead = Date.now();
 
     // Always pass dv a workspace-relative path. Absolute paths that traverse
     // a symlink (/home → /var/home on Fedora Atomic) cause dv to silently
@@ -136,6 +139,7 @@ export class QuickDiff implements vscode.QuickDiffProvider, vscode.TextDocumentC
       );
       return working;
     }
+    const tAfterDv = Date.now();
 
     const trimmed = stdout.trim();
     if (!trimmed || /^no changes/i.test(trimmed)) {
@@ -157,11 +161,17 @@ export class QuickDiff implements vscode.QuickDiffProvider, vscode.TextDocumentC
     }
 
     const base = reverseApply(working, diff);
+    const tAfterApply = Date.now();
     if (!base) {
       this.diagnoseReverseApplyFailure(uri.fsPath, working, stdout, diff);
       return working;
     }
-    this.logger.info(`[QuickDiff] reverseApply OK — base differs from working: ${base !== working}`);
+    this.logger.info(
+      `[QuickDiff] reverseApply OK · differs=${base !== working} · ` +
+      `total=${tAfterApply - tStart}ms (read=${tAfterRead - tBeforeRead}ms, ` +
+      `dv=${tAfterDv - tAfterRead}ms, parse+apply=${tAfterApply - tAfterDv}ms, ` +
+      `dv-bytes=${stdout.length})`
+    );
     return base;
   }
 

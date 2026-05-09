@@ -120,6 +120,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('diversion.verify', verifyCommand),
     vscode.commands.registerCommand('diversion.toggleBlame', () => blame?.toggle()),
     vscode.commands.registerCommand('diversion.daemonHealth', daemonHealthCommand),
+    vscode.commands.registerCommand('diversion.perfTrace', perfTraceCommand),
     vscode.commands.registerCommand('diversion.cherryPickCommit', cherryPickCommand),
     vscode.commands.registerCommand('diversion.revertCommit', revertCommitCommand),
     vscode.commands.registerCommand('diversion.revertToCommit', revertToCommitCommand),
@@ -310,6 +311,7 @@ async function moreActionsCommand(): Promise<void> {
     { label: '$(eye) Toggle Blame (Annotation)', command: 'diversion.toggleBlame' },
     { label: '$(verified) Verify Repository Integrity', command: 'diversion.verify' },
     { label: '$(server) Show Daemon Health', command: 'diversion.daemonHealth' },
+    { label: '$(watch) Run Performance Trace', command: 'diversion.perfTrace' },
     { label: '$(output) Show Output Channel', command: 'diversion.showOutput' },
   ];
   const pick = await vscode.window.showQuickPick(items, { placeHolder: 'Diversion: choose an action' });
@@ -361,6 +363,94 @@ async function updateWorkspaceCommand(): Promise<void> {
   } catch (err) {
     void vscode.window.showErrorMessage(`Diversion: update failed: ${(err as Error).message}`);
   }
+}
+
+async function perfTraceCommand(): Promise<void> {
+  const provider = activeProvider();
+  if (!provider) {
+    void vscode.window.showInformationMessage('Diversion: no active workspace.');
+    return;
+  }
+  const log = logger!;
+  log.show();
+  log.info('────────────────────────────────────────');
+  log.info('[perf] Diversion: Run Performance Trace');
+  log.info('────────────────────────────────────────');
+
+  const repo = provider.repo;
+  const root = repo.root;
+
+  // The raw `runDv` measurement so we know dv invocation cost without our parsing.
+  const time = async <T>(label: string, fn: () => Promise<T>): Promise<T | undefined> => {
+    const t0 = Date.now();
+    try {
+      const r = await fn();
+      log.info(`[perf] ${label}: ${Date.now() - t0}ms`);
+      return r;
+    } catch (err) {
+      log.warn(`[perf] ${label}: FAILED after ${Date.now() - t0}ms — ${(err as Error).message}`);
+      return undefined;
+    }
+  };
+
+  log.info(`[perf] repo=${repo.info.repoName} root=${root}`);
+  log.info(`[perf] dv=${repo.binaryPath ?? 'dv'} (PATH lookup)`);
+
+  await time('dv status (full state)', () => repo.getState());
+  await time('dv status (full state) — warm', () => repo.getState());
+  await time('dv branch', () => repo.listBranches());
+  await time('dv log -n 100 --date iso', () => repo.logFull(100));
+  await time('dv log -n 10 --date iso', () => repo.logFull(10));
+
+  const commits = await repo.logFull(5).catch(() => []);
+  if (commits.length > 0) {
+    const latestId = commits[0]!.id;
+    const earlierId = commits[Math.min(commits.length - 1, 4)]!.id;
+    await time(`dv show ${latestId} --name-status`, () => repo.fileChangesForCommit(latestId));
+    await time(`dv show ${latestId} --name-status — warm`, () => repo.fileChangesForCommit(latestId));
+    await time(`dv show ${earlierId} --name-status`, () => repo.fileChangesForCommit(earlierId));
+  }
+
+  // Sample: pick the first changed text file (if any) and time the QuickDiff path.
+  const state = await repo.getState().catch(() => undefined);
+  const sample = state?.changes.find((c) => c.kind === 'modified');
+  if (sample) {
+    const sampleAbs = path.join(root, sample.path);
+    log.info(`[perf] sample file: ${sample.path}`);
+    await time(`dv diff <file>          (cold)`, async () => {
+      // re-spawn through our cli runner with a unique file path each time
+      const { runDvOrThrow } = await import('./diversion/cli.js');
+      await runDvOrThrow(['diff', '--color', 'never', sample.path], { cwd: root, dvPath: repo.binaryPath, timeoutMs: 30_000 });
+    });
+    await time(`dv diff <file>          (warm)`, async () => {
+      const { runDvOrThrow } = await import('./diversion/cli.js');
+      await runDvOrThrow(['diff', '--color', 'never', sample.path], { cwd: root, dvPath: repo.binaryPath, timeoutMs: 30_000 });
+    });
+    void sampleAbs;
+  } else {
+    log.info('[perf] no modified text file found — skipping diff timing.');
+  }
+
+  // Daemon-only: HTTP roundtrip to /workspaces. Pure local IPC, the
+  // closest thing to a "process spawn cost" baseline we have.
+  await time('daemon GET /workspaces  (cold)', async () => {
+    const { DaemonClient } = await import('./diversion/daemon.js');
+    const settings = readSettings();
+    const d = new DaemonClient(settings.daemonUrl ? { baseUrl: settings.daemonUrl } : {});
+    await d.workspaces();
+  });
+  await time('daemon GET /workspaces  (warm)', async () => {
+    const { DaemonClient } = await import('./diversion/daemon.js');
+    const settings = readSettings();
+    const d = new DaemonClient(settings.daemonUrl ? { baseUrl: settings.daemonUrl } : {});
+    await d.workspaces();
+  });
+
+  log.info('────────────────────────────────────────');
+  log.info('[perf] done — see the differences between cold and warm calls.');
+  log.info('[perf] If "dv diff <file> (cold)" >> "daemon GET /workspaces", the cost is in dv (binary spawn + daemon round-trip + cloud fetch), not us.');
+  log.info('────────────────────────────────────────');
+  void vscode.window.showInformationMessage('Diversion: perf trace complete (see Output → Diversion).');
 }
 
 async function daemonHealthCommand(): Promise<void> {
