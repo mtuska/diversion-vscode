@@ -159,6 +159,11 @@ export class DiversionScmProvider implements vscode.Disposable {
 
   private async doRefresh(): Promise<void> {
     try {
+      const before = {
+        commitId: this.repo.info.commitId,
+        branchName: this.repo.info.branchName,
+      };
+
       const [state] = await Promise.all([
         this.repo.getState(),
         this.repo.refreshIdentity(),
@@ -217,6 +222,15 @@ export class DiversionScmProvider implements vscode.Disposable {
       this.sc.count = conflicts.length + staged.length + changes.length;
       this.updateTitleButtons();
       this.history?.notifyCurrentChanged();
+      // If the branch tip moved (commit, checkout, merge, etc.) tell
+      // VS Code's graph view to re-query — `notifyCurrentChanged` only
+      // updates the "current" indicator, not the commit list itself.
+      const moved = this.repo.info.commitId !== before.commitId
+        || this.repo.info.branchName !== before.branchName;
+      if (moved) {
+        const currentRef = this.history?.currentHistoryItemRef;
+        this.history?.notifyRefsChanged(currentRef ? { modified: [currentRef] } : {});
+      }
       this.changeDecorations?.setRepoState(this.repo.root, decorationStates);
       const filterNote = this.openFolders.length > 0 && hidden > 0
         ? ` (${hidden} hidden by open-folder filter: ${this.openFolders.join(', ')})`

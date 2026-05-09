@@ -62,9 +62,24 @@ export class DiversionHistoryProvider implements vscode.SourceControlHistoryProv
     this._onDidChangeCurrentHistoryItemRefs.fire();
   }
 
-  /** Fire when the set of branches changes (e.g. created / deleted). */
-  notifyRefsChanged(added: vscode.SourceControlHistoryItemRef[] = [], removed: vscode.SourceControlHistoryItemRef[] = []): void {
-    this._onDidChangeHistoryItemRefs.fire({ added, removed, modified: [], silent: false });
+  /**
+   * Fire when the set of refs changes — branches created / deleted
+   * (`added`/`removed`) or a branch tip moving (`modified`, e.g. after
+   * a commit). VS Code listens to this event to re-query the graph,
+   * so it must fire whenever a new commit lands so the new entry
+   * shows up without the user clicking refresh.
+   */
+  notifyRefsChanged(opts: {
+    added?: vscode.SourceControlHistoryItemRef[];
+    removed?: vscode.SourceControlHistoryItemRef[];
+    modified?: vscode.SourceControlHistoryItemRef[];
+  } = {}): void {
+    this._onDidChangeHistoryItemRefs.fire({
+      added: opts.added ?? [],
+      removed: opts.removed ?? [],
+      modified: opts.modified ?? [],
+      silent: false,
+    });
   }
 
   async provideHistoryItemRefs(

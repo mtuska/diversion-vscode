@@ -897,6 +897,7 @@ async function commitCommand(sourceControl?: vscode.SourceControl): Promise<void
   const staged = provider.getStagedPaths();
   const useStaged = staged.length > 0;
   const title = useStaged ? `dv commit (${staged.length} staged)` : 'dv commit -a';
+  const beforeCommitId = provider.repo.info.commitId;
   try {
     await vscode.window.withProgress(
       { location: vscode.ProgressLocation.SourceControl, title },
@@ -904,10 +905,34 @@ async function commitCommand(sourceControl?: vscode.SourceControl): Promise<void
     );
     provider.clearStaged();
     provider.sourceControl.inputBox.value = '';
+    await waitForNewCommitId(provider, beforeCommitId);
     await provider.refresh();
     updateStatusBar();
   } catch (err) {
     void vscode.window.showErrorMessage(`Diversion commit failed: ${(err as Error).message}`);
+  }
+}
+
+/**
+ * `dv commit` returns as soon as the local op finishes, but the daemon's
+ * workspace cache can lag a beat behind reporting the new commit id.
+ * Without this wait, the immediate post-commit refresh frequently sees
+ * the *old* commit id and the SCM graph + status bar both stay stuck on
+ * the previous commit until something else triggers a second refresh.
+ *
+ * Polls `refreshIdentity()` until the commit id changes (or the budget
+ * runs out — the user still gets a refresh, just possibly with stale
+ * identity for one cycle).
+ */
+async function waitForNewCommitId(
+  provider: DiversionScmProvider,
+  beforeCommitId: string,
+): Promise<void> {
+  const deadline = Date.now() + 2000;
+  while (Date.now() < deadline) {
+    await provider.repo.refreshIdentity();
+    if (provider.repo.info.commitId !== beforeCommitId) return;
+    await new Promise((r) => setTimeout(r, 100));
   }
 }
 
@@ -982,12 +1007,14 @@ async function commitSelectedCommand(...resources: vscode.SourceControlResourceS
     .filter((r) => providerForUri(r.resourceUri) === provider)
     .map((r) => relForResource(provider, r.resourceUri));
 
+  const beforeCommitId = provider.repo.info.commitId;
   try {
     await vscode.window.withProgress(
       { location: vscode.ProgressLocation.SourceControl, title: `dv commit (${paths.length} path(s))` },
       async () => provider.repo.commit(message, paths),
     );
     provider.sourceControl.inputBox.value = '';
+    await waitForNewCommitId(provider, beforeCommitId);
     await provider.refresh();
     updateStatusBar();
   } catch (err) {

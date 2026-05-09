@@ -2,7 +2,7 @@
   "name": "diversion-vscode",
   "displayName": "Diversion",
   "description": "Source control integration for Diversion (https://www.diversion.dev) — register Diversion as a first-class SCM provider in VS Code.",
-  "version": "0.3.20",
+  "version": "0.3.21",
   "publisher": "mtuska",
   "license": "Unlicense",
   "repository": {
