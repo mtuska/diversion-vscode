@@ -14,30 +14,25 @@
       "preLaunchTask": "npm: build"
     },
     {
-      "name": "Run Extension on SampleRepo",
+      "name": "Run Extension on Diversion workspace…",
       "type": "extensionHost",
       "request": "launch",
       "args": [
         "--extensionDevelopmentPath=${workspaceFolder}",
-        "${env:HOME}/Diversion/SampleRepo"
+        "${input:diversionWorkspacePath}"
       ],
       "outFiles": [
         "${workspaceFolder}/out/**/*.js"
       ],
       "preLaunchTask": "npm: build"
-    },
+    }
+  ],
+  "inputs": [
     {
-      "name": "Run Extension on SampleRepo-2",
-      "type": "extensionHost",
-      "request": "launch",
-      "args": [
-        "--extensionDevelopmentPath=${workspaceFolder}",
-        "${env:HOME}/Diversion/SampleRepo2"
-      ],
-      "outFiles": [
-        "${workspaceFolder}/out/**/*.js"
-      ],
-      "preLaunchTask": "npm: build"
+      "id": "diversionWorkspacePath",
+      "type": "promptString",
+      "description": "Absolute path to the Diversion workspace to open in the Extension Development Host (a sub-directory works too — the extension walks up to the .diversion/ root).",
+      "default": "${env:HOME}/Diversion/"
     }
   ]
 }
