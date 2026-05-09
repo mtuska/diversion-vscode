@@ -1,7 +1,8 @@
+import * as path from 'node:path';
 import * as vscode from 'vscode';
 import type { ChangeKind } from '../diversion/types.js';
 import type { IgnoreManager } from '../util/ignore.js';
-import { isInsideOrEqual } from '../util/path.js';
+import { isInsideOrEqual, pathEquals } from '../util/path.js';
 import type { Logger } from '../util/log.js';
 
 /**
@@ -28,6 +29,16 @@ export class ChangeDecorationsProvider implements vscode.FileDecorationProvider,
 
   /** Map of absolute fs path → change kind, scoped per repo root. */
   private byRepo = new Map<string, Map<string, ChangeKind>>();
+  /**
+   * Absolute paths of every directory that is an ancestor of at least
+   * one changed file, scoped per repo root. We return decorations for
+   * these directly instead of relying solely on VS Code's `propagate`
+   * mechanism — propagation only kicks in for tree nodes VS Code has
+   * already queried, so collapsed parents stay un-decorated until the
+   * user expands down to a leaf. Providing the parent decoration up
+   * front means the explorer reflects SCM state immediately.
+   */
+  private ancestorsByRepo = new Map<string, Set<string>>();
   /** Ignore matchers, scoped per repo root. */
   private ignoresByRepo = new Map<string, IgnoreManager>();
 
@@ -57,6 +68,9 @@ export class ChangeDecorationsProvider implements vscode.FileDecorationProvider,
    */
   setRepoState(repoRoot: string, next: Map<string, ChangeKind>): void {
     const previous = this.byRepo.get(repoRoot) ?? new Map<string, ChangeKind>();
+    const previousAncestors = this.ancestorsByRepo.get(repoRoot) ?? new Set<string>();
+    const nextAncestors = computeAncestors(repoRoot, next.keys());
+
     const changed: vscode.Uri[] = [];
 
     for (const [absPath, kind] of next) {
@@ -65,10 +79,21 @@ export class ChangeDecorationsProvider implements vscode.FileDecorationProvider,
     for (const absPath of previous.keys()) {
       if (!next.has(absPath)) changed.push(vscode.Uri.file(absPath));
     }
+    for (const dir of nextAncestors) {
+      if (!previousAncestors.has(dir)) changed.push(vscode.Uri.file(dir));
+    }
+    for (const dir of previousAncestors) {
+      if (!nextAncestors.has(dir)) changed.push(vscode.Uri.file(dir));
+    }
+
     this.byRepo.set(repoRoot, next);
+    this.ancestorsByRepo.set(repoRoot, nextAncestors);
 
     if (changed.length > 0) {
-      this.logger.debug(`[changeDecorations] ${changed.length} URIs changed`);
+      this.logger.debug(
+        `[changeDecorations] ${changed.length} URIs changed ` +
+        `(${next.size} files, ${nextAncestors.size} ancestor dirs)`,
+      );
       this._onDidChange.fire(changed);
     }
   }
@@ -85,9 +110,13 @@ export class ChangeDecorationsProvider implements vscode.FileDecorationProvider,
   /** Drop a repo's state entirely (provider unregister). */
   clearRepoState(repoRoot: string): void {
     const previous = this.byRepo.get(repoRoot);
-    if (!previous) return;
-    const uris = [...previous.keys()].map((p) => vscode.Uri.file(p));
+    const previousAncestors = this.ancestorsByRepo.get(repoRoot);
+    if (!previous && !previousAncestors) return;
+    const uris: vscode.Uri[] = [];
+    if (previous) for (const p of previous.keys()) uris.push(vscode.Uri.file(p));
+    if (previousAncestors) for (const p of previousAncestors) uris.push(vscode.Uri.file(p));
     this.byRepo.delete(repoRoot);
+    this.ancestorsByRepo.delete(repoRoot);
     if (uris.length > 0) this._onDidChange.fire(uris);
   }
 
@@ -100,6 +129,11 @@ export class ChangeDecorationsProvider implements vscode.FileDecorationProvider,
       const kind = map.get(uri.fsPath);
       if (kind) return decorationFor(kind);
     }
+    // Folder rolls up to a "contains changes" decoration so the
+    // explorer reflects SCM state without the user needing to expand.
+    for (const ancestors of this.ancestorsByRepo.values()) {
+      if (ancestors.has(uri.fsPath)) return ancestorDecoration();
+    }
     // Otherwise, gray-out files that any matching repo's ignore set covers.
     for (const [root, mgr] of this.ignoresByRepo) {
       if (!isInsideOrEqual(root, uri.fsPath)) continue;
@@ -109,6 +143,38 @@ export class ChangeDecorationsProvider implements vscode.FileDecorationProvider,
   }
 
   dispose(): void { this._onDidChange.dispose(); }
+}
+
+/**
+ * Walk every changed file's ancestry up to (but not including) the
+ * repo root, collecting the unique directory paths along the way.
+ * Used to populate folder decorations directly so the explorer doesn't
+ * have to wait for VS Code's lazy `propagate` aggregation.
+ */
+function computeAncestors(repoRoot: string, paths: Iterable<string>): Set<string> {
+  const out = new Set<string>();
+  for (const p of paths) {
+    let dir = path.dirname(p);
+    while (isInsideOrEqual(repoRoot, dir) && !pathEquals(dir, repoRoot)) {
+      if (out.has(dir)) break;
+      out.add(dir);
+      const parent = path.dirname(dir);
+      if (pathEquals(parent, dir)) break;
+      dir = parent;
+    }
+  }
+  return out;
+}
+
+function ancestorDecoration(): vscode.FileDecoration {
+  return {
+    color: new vscode.ThemeColor('gitDecoration.modifiedResourceForeground'),
+    tooltip: 'Contains changes',
+    // Propagate so grandparents pick up the colour too — even if VS Code
+    // never queries an intermediate directory we don't have an ancestor
+    // entry for, the chain still reaches the visible top-level folder.
+    propagate: true,
+  };
 }
 
 function ignoredDecoration(): vscode.FileDecoration {
