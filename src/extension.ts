@@ -22,6 +22,7 @@ import { looksBinary } from './util/binary.js';
 import { isInsideOrEqual } from './util/path.js';
 import { deleteSidecar } from './diversion/repo.js';
 import type { ChangeKind } from './diversion/types.js';
+import { registerLanguageModelTools } from './ai/tools.js';
 
 let logger: Logger | undefined;
 let statusBar: StatusBar | undefined;
@@ -146,6 +147,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('diversion.deleteShelf', deleteShelfCommand),
     vscode.commands.registerCommand('diversion.renameShelf', renameShelfCommand),
     vscode.commands.registerCommand('diversion.shelveAndSwitchBranch', shelveAndSwitchBranchCommand),
+  );
+
+  // Expose read-only SCM state to Copilot Chat / other vscode.lm consumers.
+  registerLanguageModelTools(
+    context,
+    function* () { for (const p of providers.values()) yield p.repo; },
+    log,
   );
 
   // Apply concurrency cap before any dv calls fire.

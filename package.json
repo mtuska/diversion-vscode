@@ -14,7 +14,7 @@
   },
   "homepage": "https://github.com/mtuska/diversion-vscode#readme",
   "engines": {
-    "vscode": "^1.93.0"
+    "vscode": "^1.95.0"
   },
   "enabledApiProposals": [
     "scmHistoryProvider"
@@ -504,7 +504,96 @@
           "group": "7_modification@2"
         }
       ]
-    }
+    },
+    "languageModelTools": [
+      {
+        "name": "diversion_status",
+        "displayName": "Diversion: Status",
+        "modelDescription": "Returns the current Diversion SCM state of a repository: branch, commit ID, sync state (paused / read-only), and the list of working-tree changes (modified/added/deleted/renamed files) plus any sync conflicts. Use this when you need to know what files the user has changed in their Diversion workspace, or what branch/commit they are on. Diversion is a different VCS than git; do NOT use git tools on Diversion repos.",
+        "userDescription": "Show the current Diversion working-tree status, branch, and commit.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "dvStatus",
+        "tags": ["diversion", "scm"],
+        "icon": "$(git-branch)",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "repo": {
+              "type": "string",
+              "description": "Optional. Repository name (e.g. 'MyProject') or an absolute filesystem path inside the repo. Required if multiple Diversion repos are open in the workspace; omit when there is only one."
+            }
+          }
+        }
+      },
+      {
+        "name": "diversion_diff",
+        "displayName": "Diversion: Working-tree Diff",
+        "modelDescription": "Returns the unified diff of the current working tree against the base commit, optionally scoped to specific paths. Use this when you need to see WHAT the user changed (the actual hunks) — for code review, generating a commit message, or explaining their work. Returns plain text in standard unified diff format.",
+        "userDescription": "Show the unified diff of working-tree changes in a Diversion repo.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "dvDiff",
+        "tags": ["diversion", "scm"],
+        "icon": "$(diff)",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "repo": {
+              "type": "string",
+              "description": "Optional. Repository name or an absolute filesystem path inside the repo. Required if multiple Diversion repos are open."
+            },
+            "paths": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Optional list of repo-relative file or directory paths to scope the diff to. Omit to diff the entire working tree."
+            }
+          }
+        }
+      },
+      {
+        "name": "diversion_log",
+        "displayName": "Diversion: Commit Log",
+        "modelDescription": "Returns recent commits in the current branch with full message bodies, author, date, and any branch refs at each commit. Use this for history queries, changelog generation, or to find a specific past change.",
+        "userDescription": "Show recent commits in a Diversion repo.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "dvLog",
+        "tags": ["diversion", "scm"],
+        "icon": "$(history)",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "repo": {
+              "type": "string",
+              "description": "Optional. Repository name or an absolute filesystem path inside the repo. Required if multiple Diversion repos are open."
+            },
+            "limit": {
+              "type": "number",
+              "description": "Maximum number of commits to return. Default 20, max 200.",
+              "minimum": 1,
+              "maximum": 200
+            }
+          }
+        }
+      },
+      {
+        "name": "diversion_branches",
+        "displayName": "Diversion: List Branches",
+        "modelDescription": "Returns all branches in the Diversion repository with their tip commit IDs. The currently checked-out branch is marked with a leading '*'. Use this when the user asks about branches, wants to switch branches, or you need to know which branch a commit is on.",
+        "userDescription": "List branches in a Diversion repo.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "dvBranches",
+        "tags": ["diversion", "scm"],
+        "icon": "$(git-branch)",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "repo": {
+              "type": "string",
+              "description": "Optional. Repository name or an absolute filesystem path inside the repo. Required if multiple Diversion repos are open."
+            }
+          }
+        }
+      }
+    ]
   },
   "scripts": {
     "build": "node esbuild.config.mjs",
@@ -520,7 +609,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
-    "@types/vscode": "^1.93.0",
+    "@types/vscode": "^1.95.0",
     "@vscode/vsce": "^2.27.0",
     "esbuild": "^0.21.5",
     "typescript": "^5.4.5",
