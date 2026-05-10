@@ -216,25 +216,80 @@ export function deactivate(): void {
   quickDiff?.dispose();
 }
 
+let reconnectTimer: NodeJS.Timeout | undefined;
+let daemonConnected = false;
+
 async function healthCheck(log: Logger): Promise<void> {
   const settings = readSettings();
   const daemon = new DaemonClient(settings.daemonUrl ? { baseUrl: settings.daemonUrl } : {});
   try {
     const health = await daemon.health();
-    log.info(`Daemon healthy at ${await daemon.baseUrl()} (dv ${health.Version})`);
-    warnIfIncompatibleVersion(log, health.Version);
-    // Wire up the persistent commit-content cache once we know dv's version.
-    // Cache is segmented by version so old-version artifacts don't leak in.
-    if (commitContent && activationContext) {
-      commitContent.attachPersistence(activationContext.globalStorageUri, health.Version);
-    }
+    onDaemonReady(log, daemon, health.Version);
   } catch (err) {
     if (err instanceof DaemonUnavailableError) {
-      log.warn(`Daemon unreachable: ${err.message}. Filesystem fallback in use.`);
+      log.warn(`Daemon unreachable: ${err.message}. Filesystem fallback in use; will retry in the background.`);
+      scheduleDaemonReconnect(log);
     } else {
       log.error('Unexpected error contacting daemon', err);
     }
   }
+}
+
+function onDaemonReady(log: Logger, daemon: DaemonClient, version: string): void {
+  daemonConnected = true;
+  void daemon.baseUrl().then((url) => log.info(`Daemon healthy at ${url} (dv ${version})`));
+  warnIfIncompatibleVersion(log, version);
+  // Wire up the persistent commit-content cache once we know dv's version.
+  // Cache is segmented by version so old-version artifacts don't leak in.
+  if (commitContent && activationContext) {
+    commitContent.attachPersistence(activationContext.globalStorageUri, version);
+  }
+}
+
+/**
+ * Background poll for the daemon when it's down at activation. Without this,
+ * a user who launches VS Code before `dv` finishes starting up gets stuck on
+ * the filesystem-fallback identity for the rest of the session — no graph,
+ * no commit-content cache, no live sync state. Polls every 5s for the first
+ * minute, then every 30s indefinitely; cancelled when the daemon answers or
+ * when the extension deactivates.
+ */
+function scheduleDaemonReconnect(log: Logger): void {
+  if (reconnectTimer || daemonConnected) return;
+  let attempt = 0;
+  const tick = async (): Promise<void> => {
+    if (daemonConnected) return;
+    attempt += 1;
+    const settings = readSettings();
+    const daemon = new DaemonClient(settings.daemonUrl ? { baseUrl: settings.daemonUrl } : {});
+    try {
+      const health = await daemon.health();
+      reconnectTimer = undefined;
+      log.info(`Daemon reachable after ${attempt} retr${attempt === 1 ? 'y' : 'ies'} — completing setup.`);
+      onDaemonReady(log, daemon, health.Version);
+      // Re-scan in case no providers registered earlier (e.g. detection
+      // needed the daemon to disambiguate path → workspace mappings).
+      void scanWorkspaceFolders();
+      // Refresh existing providers so their identity (branch/commit) and
+      // graph upgrade from the filesystem-only fallback to daemon truth.
+      for (const p of providers.values()) p.scheduleRefresh(0);
+      updateStatusBar();
+      return;
+    } catch (err) {
+      if (!(err instanceof DaemonUnavailableError)) {
+        log.error('Unexpected error during daemon reconnect', err);
+      }
+    }
+    const delayMs = attempt < 12 ? 5_000 : 30_000;
+    reconnectTimer = setTimeout(() => { void tick(); }, delayMs);
+  };
+  reconnectTimer = setTimeout(() => { void tick(); }, 5_000);
+  activationContext?.subscriptions.push({
+    dispose: () => {
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      reconnectTimer = undefined;
+    },
+  });
 }
 
 /**
