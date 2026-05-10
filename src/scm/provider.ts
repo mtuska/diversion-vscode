@@ -64,7 +64,7 @@ export class DiversionScmProvider implements vscode.Disposable {
       `Diversion · ${repo.info.repoName || path.basename(repo.root)}`,
       vscode.Uri.file(repo.root),
     );
-    this.sc.inputBox.placeholder = 'Commit message (Ctrl+Enter to commit)';
+    this.sc.inputBox.placeholder = 'Message (Ctrl+Enter to commit)';
     this.sc.acceptInputCommand = {
       command: 'diversion.commit',
       title: 'Commit',
