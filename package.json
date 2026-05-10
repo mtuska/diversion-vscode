@@ -2,7 +2,7 @@
   "name": "diversion-vscode",
   "displayName": "Diversion",
   "description": "Source control integration for Diversion (https://www.diversion.dev) — register Diversion as a first-class SCM provider in VS Code.",
-  "version": "0.4.5",
+  "version": "0.4.6",
   "publisher": "mtuska",
   "license": "Unlicense",
   "repository": {
@@ -220,6 +220,36 @@
       {
         "command": "diversion.revertToCommit",
         "title": "Restore Workspace To Commit",
+        "category": "Diversion"
+      },
+      {
+        "command": "diversion.copyCommitId",
+        "title": "Copy Commit ID",
+        "category": "Diversion"
+      },
+      {
+        "command": "diversion.copyCommitMessage",
+        "title": "Copy Commit Message",
+        "category": "Diversion"
+      },
+      {
+        "command": "diversion.createTagAtCommit",
+        "title": "Create Tag...",
+        "category": "Diversion"
+      },
+      {
+        "command": "diversion.compareWithCommit",
+        "title": "Compare with...",
+        "category": "Diversion"
+      },
+      {
+        "command": "diversion.openCommitInWeb",
+        "title": "Open Commit in Web UI",
+        "category": "Diversion"
+      },
+      {
+        "command": "diversion.checkoutBranchAtCommit",
+        "title": "Checkout Branch at Commit",
         "category": "Diversion"
       },
       {
@@ -452,6 +482,21 @@
           "when": "scmProvider == diversion && scmResourceGroup == changes",
           "group": "1_modification@3"
         }
+      ],
+      "scm/historyItem/context": [
+        { "command": "diversion.openCommitInWeb", "when": "scmProvider == diversion", "group": "1_open@1" },
+
+        { "command": "diversion.checkoutBranchAtCommit", "when": "scmProvider == diversion", "group": "2_checkout@1" },
+
+        { "command": "diversion.createTagAtCommit", "when": "scmProvider == diversion", "group": "3_modification@1" },
+        { "command": "diversion.cherryPickCommit", "when": "scmProvider == diversion", "group": "3_modification@2" },
+        { "command": "diversion.revertCommit", "when": "scmProvider == diversion", "group": "3_modification@3" },
+        { "command": "diversion.revertToCommit", "when": "scmProvider == diversion", "group": "3_modification@4" },
+
+        { "command": "diversion.compareWithCommit", "when": "scmProvider == diversion", "group": "4_compare@1" },
+
+        { "command": "diversion.copyCommitId", "when": "scmProvider == diversion", "group": "9_copy@1" },
+        { "command": "diversion.copyCommitMessage", "when": "scmProvider == diversion", "group": "9_copy@2" }
       ],
       "scm/resourceGroup/context": [
         {

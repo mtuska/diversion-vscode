@@ -241,6 +241,15 @@ export class Repo {
     return r.stdout;
   }
 
+  /** Unified diff between two refs (commits / branches / tags). */
+  async diffBetween(base: string, compare: string): Promise<string> {
+    const r = await runDvOrThrow(
+      ['diff', '--color', 'never', '--base', base, '--compare', compare],
+      { cwd: this.root, dvPath: this.dvPath, timeoutMs: 120_000 },
+    );
+    return r.stdout;
+  }
+
   async discardPath(path: string): Promise<void> {
     // `-f` skips the interactive confirmation dv otherwise waits on. Without
     // it `dv reset <path>` blocks indefinitely when run without a TTY (which
@@ -368,6 +377,30 @@ export class Repo {
     await runDvOrThrow(['restore', relPath, '--source', ref], {
       cwd: this.root, dvPath: this.dvPath, timeoutMs: 0,
     });
+  }
+
+  /**
+   * Create a tag at a specific commit (or the current commit if `commitId`
+   * is omitted). dv accepts an optional description via `-a`.
+   */
+  async createTag(name: string, commitId?: string, description?: string): Promise<void> {
+    const args = ['tag', '-c', name];
+    if (description) args.push('-a', description);
+    if (commitId) args.push('--ref', commitId);
+    await runDvOrThrow(args, { cwd: this.root, dvPath: this.dvPath, timeoutMs: 30_000 });
+  }
+
+  /**
+   * Fetch full details for a single commit. Returns undefined if dv has
+   * no record of the ID (e.g. malformed input). Used by clipboard/share
+   * actions that need the message body.
+   */
+  async showCommit(commitId: string): Promise<CommitDetails | undefined> {
+    const r = await runDvOrThrow(['show', commitId, '--date', 'iso', '--color', 'never'], {
+      cwd: this.root, dvPath: this.dvPath, timeoutMs: 30_000,
+    });
+    const parsed = parseLogFull(r.stdout);
+    return parsed[0];
   }
 
   // ───── shelves ─────

@@ -141,6 +141,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('diversion.cherryPickCommit', cherryPickCommand),
     vscode.commands.registerCommand('diversion.revertCommit', revertCommitCommand),
     vscode.commands.registerCommand('diversion.revertToCommit', revertToCommitCommand),
+    vscode.commands.registerCommand('diversion.copyCommitId', copyCommitIdCommand),
+    vscode.commands.registerCommand('diversion.copyCommitMessage', copyCommitMessageCommand),
+    vscode.commands.registerCommand('diversion.createTagAtCommit', createTagAtCommitCommand),
+    vscode.commands.registerCommand('diversion.compareWithCommit', compareWithCommitCommand),
+    vscode.commands.registerCommand('diversion.openCommitInWeb', openCommitInWebCommand),
+    vscode.commands.registerCommand('diversion.checkoutBranchAtCommit', checkoutBranchAtCommitCommand),
     vscode.commands.registerCommand('diversion.refreshShelves', () => shelvesProvider?.refresh()),
     vscode.commands.registerCommand('diversion.createShelf', createShelfCommand),
     vscode.commands.registerCommand('diversion.applyShelf', applyShelfCommand),
@@ -1385,10 +1391,10 @@ async function viewHistoryCommand(sourceControl?: vscode.SourceControl): Promise
   }
 }
 
-async function cherryPickCommand(commitId?: string): Promise<void> {
+async function cherryPickCommand(...args: unknown[]): Promise<void> {
   const provider = activeProvider();
   if (!provider) return;
-  const id = await ensureCommitId(commitId, 'Cherry-pick which commit?');
+  const id = await ensureCommitId(commitIdFromArgs(args), 'Cherry-pick which commit?');
   if (!id) return;
   try {
     await vscode.window.withProgress(
@@ -1403,10 +1409,10 @@ async function cherryPickCommand(commitId?: string): Promise<void> {
   }
 }
 
-async function revertCommitCommand(commitId?: string): Promise<void> {
+async function revertCommitCommand(...args: unknown[]): Promise<void> {
   const provider = activeProvider();
   if (!provider) return;
-  const id = await ensureCommitId(commitId, 'Revert which commit?');
+  const id = await ensureCommitId(commitIdFromArgs(args), 'Revert which commit?');
   if (!id) return;
   const ok = await vscode.window.showWarningMessage(
     `Create a new commit that inverts ${id}?`,
@@ -1425,10 +1431,10 @@ async function revertCommitCommand(commitId?: string): Promise<void> {
   }
 }
 
-async function revertToCommitCommand(commitId?: string): Promise<void> {
+async function revertToCommitCommand(...args: unknown[]): Promise<void> {
   const provider = activeProvider();
   if (!provider) return;
-  const id = await ensureCommitId(commitId, 'Restore workspace to which commit?');
+  const id = await ensureCommitId(commitIdFromArgs(args), 'Restore workspace to which commit?');
   if (!id) return;
   const ok = await vscode.window.showWarningMessage(
     `Set the workspace contents to match ${id}? Local uncommitted changes may be lost. (No history is rewritten — the result will be saved as workspace changes you can then commit.)`,
@@ -1444,6 +1450,212 @@ async function revertToCommitCommand(commitId?: string): Promise<void> {
     updateStatusBar();
   } catch (err) {
     void vscode.window.showErrorMessage(`Diversion: restore failed: ${(err as Error).message}`);
+  }
+}
+
+/**
+ * Extract a commit ID from whatever the SCM Graph context menu hands us.
+ * VS Code's `scm/historyItem/context` invocation passes the SourceControl
+ * itself as the first argument (its `.id` is the provider ID, "diversion"),
+ * with the SourceControlHistoryItem following. The Command Palette passes
+ * nothing; programmatic callers may pass a bare ID string. Walk all args
+ * and pick the one that actually looks like a history item.
+ */
+function commitInfoFromArgs(args: unknown[]): { id?: string; message?: string } {
+  for (const a of args) {
+    if (typeof a === 'string' && a.startsWith('dv.commit.')) {
+      return { id: a };
+    }
+    if (a && typeof a === 'object') {
+      const o = a as Record<string, unknown>;
+      // History items expose `parentIds` (always an array) and a `dv.commit.*`
+      // id. SourceControl exposes neither — that's the discriminator.
+      if (Array.isArray(o.parentIds) && typeof o.id === 'string' && o.id.startsWith('dv.commit.')) {
+        return {
+          id: o.id,
+          message: typeof o.message === 'string' ? o.message
+                 : typeof o.subject === 'string' ? o.subject
+                 : undefined,
+        };
+      }
+      if (typeof o.historyItemId === 'string' && o.historyItemId.startsWith('dv.commit.')) {
+        return {
+          id: o.historyItemId,
+          message: typeof o.message === 'string' ? o.message : undefined,
+        };
+      }
+    }
+  }
+  return {};
+}
+
+function commitIdFromArgs(args: unknown[]): string | undefined {
+  return commitInfoFromArgs(args).id;
+}
+
+async function copyCommitIdCommand(...args: unknown[]): Promise<void> {
+  const id = await ensureCommitId(commitIdFromArgs(args), 'Copy which commit ID?');
+  if (!id) return;
+  await vscode.env.clipboard.writeText(id);
+  void vscode.window.showInformationMessage(`Copied ${id}`);
+}
+
+async function copyCommitMessageCommand(...args: unknown[]): Promise<void> {
+  const provider = activeProvider();
+  if (!provider) return;
+  const info = commitInfoFromArgs(args);
+  const id = await ensureCommitId(info.id, 'Copy message of which commit?');
+  if (!id) return;
+  let message = info.message;
+  if (!message) {
+    try {
+      const details = await provider.repo.showCommit(id);
+      message = details?.message;
+    } catch (err) {
+      void vscode.window.showErrorMessage(`Diversion: load commit failed: ${(err as Error).message}`);
+      return;
+    }
+  }
+  if (!message) {
+    void vscode.window.showWarningMessage(`Diversion: ${id} has no message.`);
+    return;
+  }
+  await vscode.env.clipboard.writeText(message);
+  void vscode.window.showInformationMessage(`Copied commit message (${id}).`);
+}
+
+async function createTagAtCommitCommand(...args: unknown[]): Promise<void> {
+  const provider = activeProvider();
+  if (!provider) return;
+  const id = await ensureCommitId(commitIdFromArgs(args), 'Tag which commit?');
+  if (!id) return;
+  const name = await vscode.window.showInputBox({
+    prompt: `Tag name for ${id}`,
+    placeHolder: 'e.g. v1.2.0',
+    validateInput: (s) => s.trim() ? undefined : 'Name required',
+  });
+  if (!name) return;
+  const description = await vscode.window.showInputBox({
+    prompt: 'Tag description (optional)',
+    placeHolder: 'Annotate the tag, or leave blank',
+  });
+  try {
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.SourceControl, title: `dv tag ${name.trim()}` },
+      () => provider.repo.createTag(name.trim(), id, description?.trim() || undefined),
+    );
+    void vscode.window.showInformationMessage(`Tagged ${id} as ${name.trim()}.`);
+  } catch (err) {
+    void vscode.window.showErrorMessage(`Diversion: create tag failed: ${(err as Error).message}`);
+  }
+}
+
+async function compareWithCommitCommand(...args: unknown[]): Promise<void> {
+  const provider = activeProvider();
+  if (!provider) return;
+  const baseId = await ensureCommitId(commitIdFromArgs(args), 'Compare which commit?');
+  if (!baseId) return;
+  let commits;
+  try {
+    commits = await provider.repo.logFull(200);
+  } catch (err) {
+    void vscode.window.showErrorMessage(`Diversion: load history failed: ${(err as Error).message}`);
+    return;
+  }
+  const items = commits
+    .filter((c) => c.id !== baseId)
+    .map((c) => ({
+      label: c.message.split('\n', 1)[0] ?? c.id,
+      description: c.id,
+      detail: `${c.authorName} · ${c.date}`,
+      commitId: c.id,
+    }));
+  const pick = await vscode.window.showQuickPick(items, {
+    placeHolder: `Compare ${baseId} with…`,
+    matchOnDescription: true,
+    matchOnDetail: true,
+  });
+  if (!pick) return;
+  try {
+    const diff = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Window, title: `dv diff ${baseId}…${pick.commitId}` },
+      () => provider.repo.diffBetween(baseId, pick.commitId),
+    );
+    const doc = await vscode.workspace.openTextDocument({ language: 'diff', content: diff });
+    await vscode.window.showTextDocument(doc, { preview: true });
+  } catch (err) {
+    void vscode.window.showErrorMessage(`Diversion: diff failed: ${(err as Error).message}`);
+  }
+}
+
+async function openCommitInWebCommand(...args: unknown[]): Promise<void> {
+  const provider = activeProvider();
+  if (!provider) return;
+  const id = await ensureCommitId(commitIdFromArgs(args), 'Open which commit in the web UI?');
+  if (!id) return;
+  const { repoId, workspaceId } = provider.repo.info;
+  if (!repoId || !workspaceId) {
+    void vscode.window.showErrorMessage('Diversion: repo/workspace ID unavailable; cannot build web URL.');
+    return;
+  }
+  const url = `https://app.diversion.dev/repo/${repoId}/workspace/${workspaceId}/view/${id}`;
+  await vscode.env.openExternal(vscode.Uri.parse(url));
+}
+
+async function checkoutBranchAtCommitCommand(...args: unknown[]): Promise<void> {
+  const provider = activeProvider();
+  if (!provider) return;
+  const id = await ensureCommitId(commitIdFromArgs(args), 'Checkout a branch at which commit?');
+  if (!id) return;
+
+  let branches: Awaited<ReturnType<typeof provider.repo.listBranches>>;
+  try {
+    branches = await provider.repo.listBranches();
+  } catch (err) {
+    void vscode.window.showErrorMessage(`Diversion: list branches failed: ${(err as Error).message}`);
+    return;
+  }
+  const atCommit = branches.filter((b) => b.commitId === id);
+  if (atCommit.length === 0) {
+    void vscode.window.showInformationMessage(
+      `Diversion: no branches at ${id}. dv has no detached-HEAD mode — use "Restore Workspace To Commit" instead.`,
+    );
+    return;
+  }
+  const current = provider.repo.info.branchName;
+  const items = atCommit.map((b) => ({
+    label: b.name === current ? `$(check) ${b.name}` : b.name,
+    description: b.commitId,
+    detail: b.id,
+    branchName: b.name,
+  }));
+  const pick = await vscode.window.showQuickPick(items, {
+    placeHolder: `Branches at ${id}`,
+  });
+  if (!pick || pick.branchName === current) return;
+
+  const handling = await vscode.window.showQuickPick(
+    [
+      { label: 'Take changes', detail: '--take-changes (carry uncommitted edits to the new branch)', action: 'take' as const },
+      { label: 'Shelve changes', detail: '--shelve-changes (set aside uncommitted edits)', action: 'shelve' as const },
+      { label: 'Discard changes', detail: '--discard-changes (throw away uncommitted edits — irreversible)', action: 'discard' as const },
+    ],
+    { placeHolder: 'How to handle uncommitted changes?' },
+  );
+  if (!handling) return;
+  try {
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.SourceControl, title: `dv checkout ${pick.branchName}` },
+      () => provider.repo.checkout(pick.branchName, {
+        takeChanges: handling.action === 'take',
+        shelveChanges: handling.action === 'shelve',
+        discardChanges: handling.action === 'discard',
+      }),
+    );
+    await provider.refresh();
+    updateStatusBar();
+  } catch (err) {
+    void vscode.window.showErrorMessage(`Diversion: checkout failed: ${(err as Error).message}`);
   }
 }
 
