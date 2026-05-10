@@ -61,6 +61,20 @@ Internalize these before running any command. Most Diversion mistakes come from 
 - **Do not edit a hard-locked file held by another user.** Diversion will warn locally but block the commit. Coordinate first or ask an admin to release the lock.
 - **Do not use `.gitignore` thinking instead of `.dvignore`.** Diversion does honor existing `.gitignore` files for compatibility, but the canonical ignore file is `.dvignore` and it takes precedence in conflicts.
 
+## Scope work to the user's working directory
+
+Diversion has no per-directory mode: `dv status`, `dv diff`, and `dv log` always report the whole workspace regardless of where they're run from. That doesn't mean the user wants whole-workspace operations. When the working directory is a subdir of the repo (e.g. `docs/`, `Content/Maps/`, `src/api/` inside a larger project), the user's intent is almost always "work on the files under here," not "act on everything in the repo."
+
+Treat the cwd as a scope filter:
+
+- **Commits.** Do not `dv commit -a` from a subdir. Pass explicit paths so only files under cwd land in the commit: `dv commit . -m "..."` (everything under cwd) or `dv commit file1 file2 -m "..."` (specific files). If `dv status` shows changes outside cwd, leave them alone — they belong to other work.
+- **Diffs.** Use `dv diff .` (or specific paths) for "what did I change here" rather than `dv diff` which shows the whole workspace.
+- **Status reporting.** `dv status` will list changes anywhere in the workspace; when reporting to the user, filter to paths under cwd. Don't say "you have N modified files" based on the unfiltered count.
+- **Log / history.** Use `dv log .` or `dv log path/to/dir` when the user wants history for the area they're working in.
+- **Discard.** `dv reset path` and `dv reset .` are safe; `dv reset --all -f` wipes the whole workspace including unrelated work — don't reach for it just because you're inside a subdir.
+
+If the user explicitly asks for whole-workspace state ("show me everything in the repo," "is the workspace clean?"), unscope. Otherwise stay inside the directory the conversation is happening in.
+
 ## Common commands — quick reference
 
 This is the working set. For full flags and less-common commands, see `references/cli-reference.md`.
@@ -120,6 +134,29 @@ dv commit Source/Player.cpp Source/Player.h -m "Tighten jump arc"
 ```
 
 If pre-commit hooks are configured and you need to bypass them (rare, e.g. emergency hotfix), append `--no-verify`. Do not bypass hooks routinely.
+
+### Commit message gotcha: no dash-led bullets
+
+Multi-line `-m` values that contain lines starting with `- ` (markdown-style bullets) are rejected by dv with a misleading error:
+
+```
+Should provide exactly one of: a list of specific paths to commit, or the `-a` option.
+```
+
+The shell quoting is fine (`-m "$(cat <<'EOF'...EOF)"` correctly passes one argv element); something later in dv's pipeline re-interprets dash-led lines inside the message body as flag tokens, then complains that "paths" and `-a` were both supplied. Reading the same body from a file with `-m "$(cat msg.txt)"` fails identically. There is no `-F <file>` flag.
+
+Safe options for multi-line messages:
+
+- Use `*` bullets instead of `- ` bullets.
+- Indent each bullet line so it doesn't start with `-` (e.g. two leading spaces).
+- Write prose paragraphs with blank lines instead of bullets.
+- Or fall back to a single-line summary and put detail in the conversation / PR / `dv view` notes.
+
+If a multi-line message is essential, sanity-check by grepping the body for `^- ` before committing:
+
+```bash
+printf '%s\n' "$MSG" | grep -nE '^- ' && echo "rewrite dash bullets before committing"
+```
 
 ## Workflow: branch, work, merge
 
