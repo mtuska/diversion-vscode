@@ -4,7 +4,7 @@ import * as fs from 'node:fs/promises';
 import { Logger } from './util/log.js';
 import { DaemonClient, DaemonUnavailableError } from './diversion/daemon.js';
 import { detectRepo, findDiversionRoot, findNestedDiversionRoots } from './diversion/detect.js';
-import { Repo } from './diversion/repo.js';
+import { Repo, MAX_COMMIT_MESSAGE_LEN } from './diversion/repo.js';
 import { readSettings } from './diversion/settings.js';
 import { setDvConcurrencyLimit } from './diversion/cli.js';
 import { DiversionScmProvider } from './scm/provider.js';
@@ -933,6 +933,9 @@ async function generateCommitMessageCommand(sourceControl?: vscode.SourceControl
     '- Prefer specific verbs over vague ones ("rewrite" over "update", "drop" over "change", "scope to" over "limit").',
     '- Do not list filenames the diff already shows. Describe the behaviour or rationale at the level of "what changed for the user / why an engineer would care".',
     '- Never write run-on prose like "Also: ..., ..., ..." — that is the trap of trying to enumerate when you should be synthesising.',
+    '',
+    'HARD CAP',
+    `Total message length must not exceed ${MAX_COMMIT_MESSAGE_LEN} characters (this is dv's limit). A typical good commit message is well under 1000 characters; treat the cap as a backstop, not a target.`,
   ].join('\n');
 
   const scopeLabel = staged.length > 0
@@ -956,7 +959,13 @@ async function generateCommitMessageCommand(sourceControl?: vscode.SourceControl
           buf += chunk;
           // Stream into the input box so the user sees the message as
           // it arrives, the same affordance Copilot's git button gives.
-          provider.sourceControl.inputBox.value = stripCodeFence(buf).trimStart();
+          // Cap the running buffer at dv's accepted length so the input
+          // never holds something `dv commit` would reject.
+          let next = stripCodeFence(buf).trimStart();
+          if (next.length > MAX_COMMIT_MESSAGE_LEN) {
+            next = next.slice(0, MAX_COMMIT_MESSAGE_LEN);
+          }
+          provider.sourceControl.inputBox.value = next;
         }
       } catch (err) {
         if (token.isCancellationRequested) return;
@@ -988,6 +997,13 @@ async function commitCommand(sourceControl?: vscode.SourceControl): Promise<void
   const message = provider.sourceControl.inputBox.value.trim();
   if (!message) {
     void vscode.window.showWarningMessage('Diversion: enter a commit message first.');
+    return;
+  }
+  if (message.length > MAX_COMMIT_MESSAGE_LEN) {
+    void vscode.window.showErrorMessage(
+      `Diversion: commit message is ${message.length} characters; ` +
+      `dv accepts at most ${MAX_COMMIT_MESSAGE_LEN}. Trim it and try again.`,
+    );
     return;
   }
   const staged = provider.getStagedPaths();
@@ -1173,10 +1189,24 @@ async function commitSelectedCommand(...resources: vscode.SourceControlResourceS
     const prompt = await vscode.window.showInputBox({
       prompt: `Commit message for ${resources.length} selected resource(s)`,
       placeHolder: 'e.g. fix: tighten input handling',
-      validateInput: (v) => v.trim() ? undefined : 'Message required',
+      validateInput: (v) => {
+        const t = v.trim();
+        if (!t) return 'Message required';
+        if (t.length > MAX_COMMIT_MESSAGE_LEN) {
+          return `Too long: ${t.length} / ${MAX_COMMIT_MESSAGE_LEN} characters`;
+        }
+        return undefined;
+      },
     });
     if (!prompt) return;
     message = prompt.trim();
+  }
+  if (message.length > MAX_COMMIT_MESSAGE_LEN) {
+    void vscode.window.showErrorMessage(
+      `Diversion: commit message is ${message.length} characters; ` +
+      `dv accepts at most ${MAX_COMMIT_MESSAGE_LEN}. Trim it and try again.`,
+    );
+    return;
   }
 
   const paths = resources

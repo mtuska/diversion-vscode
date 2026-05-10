@@ -28,6 +28,14 @@ export interface RepoState {
 }
 
 /**
+ * Maximum commit-message length `dv` accepts. Anything longer is
+ * rejected by the daemon at commit time, so we validate up front and
+ * surface a clear error rather than letting the user wait through a
+ * long-running commit only to see a generic dv failure.
+ */
+export const MAX_COMMIT_MESSAGE_LEN = 16384;
+
+/**
  * High-level operations on a single Diversion workspace. Wraps the CLI runner
  * and merges in daemon-sourced identity so status-bar / detection callers
  * don't always have to shell out.
@@ -209,6 +217,12 @@ export class Repo {
   }
 
   async commit(message: string, paths?: readonly string[]): Promise<void> {
+    if (message.length > MAX_COMMIT_MESSAGE_LEN) {
+      throw new Error(
+        `Commit message is ${message.length} characters; ` +
+        `dv accepts at most ${MAX_COMMIT_MESSAGE_LEN}.`,
+      );
+    }
     const args: string[] = paths && paths.length > 0
       ? ['commit', ...paths, '-m', message]
       : ['commit', '-a', '-m', message];
