@@ -81,10 +81,31 @@ export function parseLogFull(stdout: string): CommitDetails[] {
     // Skip blank between header and message.
     while (i < lines.length && lines[i]! === '') i++;
 
-    // Message: tab-indented lines until next blank-then-`commit` header.
+    // Message: tab-indented lines, with embedded blank lines acting as
+    // paragraph separators. Two consecutive blank lines (or a `commit
+    // <id>` header) marks the end of the message — `dv log` separates
+    // commits with one tab-indented body, then two blank lines, then the
+    // next `commit` header.
     const messageLines: string[] = [];
-    while (i < lines.length && lines[i]! !== '') {
-      messageLines.push(lines[i]!.replace(/^\t/, ''));
+    while (i < lines.length) {
+      const line = lines[i]!;
+      if (COMMIT_HEAD_RE.test(line)) break;
+      if (line === '') {
+        // Blank line — could be a paragraph separator OR the start of
+        // the gap before the next commit. Look ahead: if the next non-
+        // empty line is a `commit` header (or EOF), this blank is the
+        // terminator and we drop it. Otherwise it's a paragraph break.
+        let j = i + 1;
+        while (j < lines.length && lines[j]! === '') j++;
+        if (j >= lines.length || COMMIT_HEAD_RE.test(lines[j]!)) {
+          i = j;
+          break;
+        }
+        messageLines.push('');
+        i++;
+        continue;
+      }
+      messageLines.push(line.replace(/^\t/, ''));
       i++;
     }
     commit.message = messageLines.join('\n').trimEnd();

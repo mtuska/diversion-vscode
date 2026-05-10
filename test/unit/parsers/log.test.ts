@@ -42,4 +42,22 @@ describe('parseLogFull', () => {
       'Updated perception to stagger updates for the character so it doesn\'t happen on the same frame',
     );
   });
+
+  it('preserves paragraph breaks in multi-paragraph messages', () => {
+    const r = parseLogFull(read('log-full-multiparagraph.txt'));
+    expect(r).toHaveLength(2);
+
+    const msg = r[0]!.message;
+    expect(msg.split('\n', 1)[0]).toBe('feat: lorem ipsum subject line');
+    // Subject is followed by a blank line then the body paragraph.
+    expect(msg).toMatch(/subject line\n\nLorem ipsum/);
+    // Paragraph break between body and bullet list survives as one blank line.
+    expect(msg).toMatch(/aliqua\.\n\n- Ut enim/);
+    // Two consecutive body lines stay joined by a single newline.
+    expect(msg).toMatch(/Sed do\neiusmod tempor incididunt/);
+    // The trailing blank before the next commit is trimmed.
+    expect(msg.endsWith('\n')).toBe(false);
+
+    expect(r[1]?.message).toBe('feat: short single-line subject');
+  });
 });
