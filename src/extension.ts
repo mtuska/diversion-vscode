@@ -6,7 +6,7 @@ import { DaemonClient, DaemonUnavailableError } from './diversion/daemon.js';
 import { detectRepo, findDiversionRoot, findNestedDiversionRoots } from './diversion/detect.js';
 import { Repo, MAX_COMMIT_MESSAGE_LEN } from './diversion/repo.js';
 import { readSettings } from './diversion/settings.js';
-import { setDvConcurrencyLimit } from './diversion/cli.js';
+import { setDvConcurrencyLimit, setOnDvMissing } from './diversion/cli.js';
 import { DiversionScmProvider } from './scm/provider.js';
 import { QuickDiff, DV_SCHEME } from './scm/quickDiff.js';
 import { CommitContentProvider, DV_COMMIT_SCHEME } from './scm/commitContent.js';
@@ -35,6 +35,63 @@ let commitContent: CommitContentProvider | undefined;
 const providers = new Map<string, DiversionScmProvider>();
 const ignoreManagers = new Map<string, IgnoreManager>();
 let activationContext: vscode.ExtensionContext | undefined;
+/** Whether the "dv binary not found" toast has been shown this session. Reset on `diversion.path` change. */
+let dvMissingNotified = false;
+
+/**
+ * One-shot, actionable error toast for the `spawn dv ENOENT` case (binary
+ * not on PATH, or `diversion.path` set to something that doesn't exist).
+ * Without this the user only sees the SCM panel quietly empty — every
+ * refresh/lock/QuickDiff call logs an error and they have no UI cue.
+ *
+ * Subsequent ENOENT events are silently dropped until the user updates
+ * `diversion.path` (which resets `dvMissingNotified`).
+ */
+function notifyDvMissing(attemptedPath: string): void {
+  if (dvMissingNotified) return;
+  dvMissingNotified = true;
+  const configured = vscode.workspace.getConfiguration('diversion').get<string>('path', '').trim();
+  const detail = configured
+    ? `Configured \`diversion.path\` is \`${configured}\` but no executable was found there.`
+    : `\`dv\` is not on the extension host's PATH (tried \`${attemptedPath}\`). ` +
+      `This commonly happens when VS Code is launched from a desktop launcher whose PATH ` +
+      `doesn't include where \`dv\` lives (e.g. \`~/.local/bin\`, \`~/.diversion/bin\`).`;
+  const message = `Diversion: cannot find the \`dv\` CLI. SCM operations will fail until this is resolved.`;
+  void vscode.window.showErrorMessage(
+    `${message} ${detail}`,
+    'Set Path…',
+    'Open Settings',
+    'Show Output',
+  ).then((pick) => {
+    if (pick === 'Set Path…') void promptForDvPath();
+    else if (pick === 'Open Settings') {
+      void vscode.commands.executeCommand('workbench.action.openSettings', 'diversion.path');
+    } else if (pick === 'Show Output') logger?.show();
+  });
+  logger?.error(`[cli] dv binary not found (attempted: ${attemptedPath}). User notified.`);
+}
+
+async function promptForDvPath(): Promise<void> {
+  const current = vscode.workspace.getConfiguration('diversion').get<string>('path', '');
+  const value = await vscode.window.showInputBox({
+    title: 'Diversion: path to the `dv` binary',
+    prompt: 'Absolute path, or leave empty to use the system PATH lookup.',
+    value: current,
+    placeHolder: process.platform === 'win32'
+      ? 'e.g. C:\\Program Files\\Diversion\\dv.exe'
+      : 'e.g. /home/<you>/.local/bin/dv',
+  });
+  if (value === undefined) return;
+  await vscode.workspace.getConfiguration('diversion').update(
+    'path',
+    value.trim() || undefined,
+    vscode.ConfigurationTarget.Global,
+  );
+  // The config-change listener flips dvMissingNotified back to false, so
+  // a still-broken value will surface a fresh toast on the next dv call.
+  // Kick a refresh to confirm the new path works (or re-trigger the toast).
+  for (const p of providers.values()) p.scheduleRefresh(0);
+}
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   activationContext = context;
@@ -108,6 +165,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     vscode.commands.registerCommand('diversion.refresh', refreshAllCommand),
     vscode.commands.registerCommand('diversion.commit', commitCommand),
+    vscode.commands.registerCommand('diversion.commitToNewBranch', commitToNewBranchCommand),
     vscode.commands.registerCommand('diversion.generateCommitMessage', generateCommitMessageCommand),
     vscode.commands.registerCommand('diversion.commitSelected', commitSelectedCommand),
     vscode.commands.registerCommand('diversion.stage', stageCommand),
@@ -164,6 +222,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // Apply concurrency cap before any dv calls fire.
   setDvConcurrencyLimit(readSettings().maxParallelProcesses);
+  setOnDvMissing((info) => notifyDvMissing(info.dvPath));
 
   await healthCheck(log);
   await scanWorkspaceFolders();
@@ -182,6 +241,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         // would tear down providers mid-session; a window reload covers
         // the rare "I want fewer repos showing up" direction.)
         void scanWorkspaceFolders();
+      }
+      if (e.affectsConfiguration('diversion.path')) {
+        // Propagate the new path to every existing Repo — they captured
+        // the old value at construction, so without this the change has
+        // no effect until window reload.
+        const next = readSettings().dvPath;
+        for (const p of providers.values()) p.repo.setBinaryPath(next);
+        // Allow the missing-binary toast to fire again so the user gets
+        // feedback if the new value still doesn't work.
+        dvMissingNotified = false;
       }
     }),
     vscode.window.onDidChangeWindowState((s) => {
@@ -1029,10 +1098,60 @@ async function commitCommand(sourceControl?: vscode.SourceControl): Promise<void
     void provider.repo.notifySyncRequired();
     await waitForNewCommitId(provider, beforeCommitId);
     await provider.refresh();
+    // `doRefresh()` compares before/after commit IDs to decide whether to
+    // fire `onDidChangeHistoryItemRefs`, but `waitForNewCommitId` above has
+    // already updated `repo.info` to the new id before refresh ran, so the
+    // comparison sees no movement and the Source Control Graph never
+    // re-queries. We know for a fact the branch tip moved here — force it.
+    provider.notifyHistoryRefsChanged();
     updateStatusBar();
   } catch (err) {
     void vscode.window.showErrorMessage(`Diversion commit failed: ${(err as Error).message}`);
   }
+}
+
+/**
+ * Prompt for a new branch name, create+switch, then commit on it. Mirrors
+ * the git "Commit to New Branch" affordance for users who realise mid-commit
+ * that the change belongs on its own branch.
+ */
+async function commitToNewBranchCommand(sourceControl?: vscode.SourceControl): Promise<void> {
+  const provider = pickProvider(sourceControl);
+  if (!provider) return;
+  // Validate the commit message before we touch branches — switching first
+  // and then bailing because the message is empty leaves the user on a new
+  // branch they didn't intend to land on.
+  const message = provider.sourceControl.inputBox.value.trim();
+  if (!message) {
+    void vscode.window.showWarningMessage('Diversion: enter a commit message first.');
+    return;
+  }
+  if (message.length > MAX_COMMIT_MESSAGE_LEN) {
+    void vscode.window.showErrorMessage(
+      `Diversion: commit message is ${message.length} characters; ` +
+      `dv accepts at most ${MAX_COMMIT_MESSAGE_LEN}. Trim it and try again.`,
+    );
+    return;
+  }
+  const name = await vscode.window.showInputBox({
+    prompt: 'New branch name',
+    placeHolder: 'feature/my-change',
+    validateInput: (v) => v.trim() ? undefined : 'Name required',
+  });
+  if (!name) return;
+  try {
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.SourceControl, title: `dv branch -c ${name.trim()}` },
+      () => provider.repo.createBranch(name.trim(), true),
+    );
+  } catch (err) {
+    void vscode.window.showErrorMessage(`Diversion: create branch failed: ${(err as Error).message}`);
+    return;
+  }
+  // Branch is created and we're on it — uncommitted changes carry over.
+  // Hand off to the regular commit path so the rest of the flow (refresh,
+  // graph notify, status bar) stays consistent.
+  await commitCommand(sourceControl);
 }
 
 /**
@@ -1229,6 +1348,12 @@ async function commitSelectedCommand(...resources: vscode.SourceControlResourceS
     void provider.repo.notifySyncRequired();
     await waitForNewCommitId(provider, beforeCommitId);
     await provider.refresh();
+    // `doRefresh()` compares before/after commit IDs to decide whether to
+    // fire `onDidChangeHistoryItemRefs`, but `waitForNewCommitId` above has
+    // already updated `repo.info` to the new id before refresh ran, so the
+    // comparison sees no movement and the Source Control Graph never
+    // re-queries. We know for a fact the branch tip moved here — force it.
+    provider.notifyHistoryRefsChanged();
     updateStatusBar();
   } catch (err) {
     void vscode.window.showErrorMessage(`Diversion commit failed: ${(err as Error).message}`);

@@ -21,6 +21,21 @@ export function dvConcurrencyStats(): { inFlight: number; queued: number; capaci
 }
 
 /**
+ * Notified when `spawn(dv)` fails with ENOENT (binary not found on PATH).
+ * The extension registers a handler that surfaces a one-shot, actionable
+ * error toast — without this, repeated refresh/lock/QuickDiff failures
+ * each log silently and the user sees no UI cue that anything is wrong.
+ *
+ * Module-level rather than per-call so the cli module stays vscode-free.
+ */
+let onDvMissingHandler: ((info: { dvPath: string; cause: NodeJS.ErrnoException }) => void) | undefined;
+export function setOnDvMissing(
+  handler: ((info: { dvPath: string; cause: NodeJS.ErrnoException }) => void) | undefined,
+): void {
+  onDvMissingHandler = handler;
+}
+
+/**
  * Minimal interface mirroring `vscode.CancellationToken` so this module can
  * stay framework-free and unit-testable without pulling in `vscode`.
  */
@@ -126,6 +141,11 @@ function spawnDv(args: readonly string[], opts: DvRunOptions): Promise<DvResult>
     child.on('error', (err) => {
       if (timer) clearTimeout(timer);
       tokenListener?.dispose();
+      const errno = err as NodeJS.ErrnoException;
+      if (errno.code === 'ENOENT' && onDvMissingHandler) {
+        try { onDvMissingHandler({ dvPath, cause: errno }); }
+        catch { /* handler is best-effort; don't mask the original reject */ }
+      }
       reject(err);
     });
 

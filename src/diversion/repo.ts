@@ -44,7 +44,7 @@ export class Repo {
   constructor(
     private readonly daemon: DaemonClient,
     private readonly identity: RepoIdentity,
-    private readonly dvPath: string | undefined,
+    private dvPath: string | undefined,
     private readonly logger: Logger,
   ) {}
 
@@ -52,6 +52,16 @@ export class Repo {
   get info(): RepoIdentity { return this.identity; }
   /** The dv binary path used for this repo, or undefined to use PATH lookup. */
   get binaryPath(): string | undefined { return this.dvPath; }
+  /**
+   * Update the dv binary path at runtime. Called when the user edits
+   * `diversion.path` mid-session — without this, existing repos keep
+   * trying to spawn whatever was configured at activation time.
+   */
+  setBinaryPath(next: string | undefined): void {
+    if (this.dvPath === next) return;
+    this.logger.info(`[repo] dv binary path → ${next ?? '(system PATH lookup)'}`);
+    this.dvPath = next;
+  }
 
   /** Refresh the cached identity from the daemon (branch/commit/paused state). */
   async refreshIdentity(): Promise<RepoIdentity> {

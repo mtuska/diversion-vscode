@@ -2,7 +2,7 @@
   "name": "diversion-vscode",
   "displayName": "Diversion",
   "description": "Source control integration for Diversion (https://www.diversion.dev) — register Diversion as a first-class SCM provider in VS Code.",
-  "version": "0.4.6",
+  "version": "0.4.7",
   "publisher": "mtuska",
   "license": "Unlicense",
   "repository": {
@@ -17,7 +17,8 @@
     "vscode": "^1.95.0"
   },
   "enabledApiProposals": [
-    "scmHistoryProvider"
+    "scmHistoryProvider",
+    "scmActionButton"
   ],
   "categories": [
     "SCM Providers"
@@ -41,6 +42,12 @@
         "title": "Commit",
         "category": "Diversion",
         "icon": "$(check)"
+      },
+      {
+        "command": "diversion.commitToNewBranch",
+        "title": "Commit to New Branch…",
+        "category": "Diversion",
+        "icon": "$(git-branch-create)"
       },
       {
         "command": "diversion.generateCommitMessage",
@@ -363,7 +370,10 @@
       ],
       "scm/title": [
         { "command": "diversion.commit", "when": "scmProvider == diversion", "group": "navigation@1" },
-        { "command": "diversion.refresh", "when": "scmProvider == diversion", "group": "navigation@2" }
+        { "command": "diversion.refresh", "when": "scmProvider == diversion", "group": "navigation@2" },
+
+        { "command": "diversion.commit", "when": "scmProvider == diversion", "group": "1_commit@1" },
+        { "command": "diversion.commitToNewBranch", "when": "scmProvider == diversion", "group": "1_commit@2" }
       ],
       "scm/inputBox": [
         { "command": "diversion.generateCommitMessage", "when": "scmProvider == diversion", "group": "navigation@1" }

@@ -221,6 +221,7 @@ export class DiversionScmProvider implements vscode.Disposable {
       this.groupChanges.resourceStates = changes;
       this.sc.count = conflicts.length + staged.length + changes.length;
       this.updateTitleButtons();
+      this.updateActionButton(staged.length + changes.length);
       this.history?.notifyCurrentChanged();
       // If the branch tip moved (commit, checkout, merge, etc.) tell
       // VS Code's graph view to re-query — `notifyCurrentChanged` only
@@ -314,6 +315,20 @@ export class DiversionScmProvider implements vscode.Disposable {
     this.persistStaged();
   }
 
+  /**
+   * Force the Source Control Graph to re-query refs and history. Used by
+   * the commit command — we *know* the branch tip moved, and the inline
+   * before/after check in `doRefresh()` can race with `refreshIdentity()`
+   * polling done before refresh, so we explicitly fire the event here
+   * rather than rely on the comparison detecting movement.
+   */
+  notifyHistoryRefsChanged(): void {
+    if (!this.history) return;
+    this.history.notifyCurrentChanged();
+    const currentRef = this.history.currentHistoryItemRef;
+    this.history.notifyRefsChanged(currentRef ? { modified: [currentRef] } : {});
+  }
+
   private persistStaged(): void {
     void this.storage.update(this.storageKey, [...this.stagedPaths]);
   }
@@ -353,6 +368,57 @@ export class DiversionScmProvider implements vscode.Disposable {
         tooltip: 'Diversion: more actions',
       },
     ];
+  }
+
+  /**
+   * Big primary "Commit" button below the SCM input box (the same surface
+   * Git uses for its blue commit button). Renders only when the
+   * `scmActionButton` proposed API is enabled; otherwise the assignment is
+   * a no-op and users still get the navigation-bar commit button.
+   *
+   * `secondaryCommands` is the dropdown — VS Code renders a chevron next to
+   * the main button. We group them so each section is separated by a thin
+   * line: commit variants in one group, branch action in another.
+   */
+  private updateActionButton(changeCount: number): void {
+    const stagedCount = this.stagedPaths.size;
+    const buttonLabel = stagedCount > 0
+      ? `$(check) Commit Staged (${stagedCount})`
+      : '$(check) Commit All' + (changeCount > 0 ? ` (${changeCount})` : '');
+    const actionButton: vscode.SourceControlActionButton = {
+      command: {
+        command: 'diversion.commit',
+        title: buttonLabel,
+        shortTitle: 'Commit',
+        tooltip: stagedCount > 0
+          ? `Commit ${stagedCount} staged change(s)`
+          : 'Commit all changes',
+        arguments: [this.sc],
+      },
+      secondaryCommands: [
+        [
+          {
+            command: 'diversion.commit',
+            title: 'Commit',
+            arguments: [this.sc],
+          },
+          {
+            command: 'diversion.commitToNewBranch',
+            title: 'Commit to New Branch…',
+            tooltip: 'Create and switch to a new branch, then commit',
+            arguments: [this.sc],
+          },
+        ],
+      ],
+      enabled: changeCount > 0,
+    };
+    try {
+      this.sc.actionButton = actionButton;
+    } catch (err) {
+      // The proposed API isn't enabled at runtime — fall back to the
+      // navigation-bar commit button and chevron.
+      this.logger.debug(`[scm] actionButton unavailable: ${(err as Error).message}`);
+    }
   }
 
   dispose(): void {
