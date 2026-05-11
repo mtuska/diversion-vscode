@@ -112,8 +112,15 @@ jobs:
       # Publishes the same .vsix that was just attached to the GitHub release.
       # Only runs for tag pushes or manual workflow_dispatch — never PRs, since
       # this workflow has no pull_request trigger.
+      #
+      # `--allow-proposed-apis` is required because we ship with
+      # `enabledApiProposals` set in package.json (scmHistoryProvider for the
+      # Source Control Graph, scmActionButton for the big blue commit button).
+      # Without it, vsce refuses to publish even though the publisher account
+      # is allowlisted on the Marketplace side. Keep this flag in sync with
+      # the `enabledApiProposals` array in package.json.
       - name: Publish to VS Marketplace
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
           VSIX: ${{ steps.vsix.outputs.file }}
-        run: npx vsce publish --no-dependencies --packagePath "$VSIX"
+        run: npx vsce publish --no-dependencies --packagePath "$VSIX" --allow-proposed-apis scmHistoryProvider scmActionButton
