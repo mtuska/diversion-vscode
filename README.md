@@ -1,12 +1,14 @@
 # Diversion for VS Code
 
+[![VS Marketplace](https://img.shields.io/visual-studio-marketplace/v/mtuska.diversion-vscode?label=VS%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=mtuska.diversion-vscode)
+[![Installs](https://img.shields.io/visual-studio-marketplace/i/mtuska.diversion-vscode)](https://marketplace.visualstudio.com/items?itemName=mtuska.diversion-vscode)
 [![Latest release](https://img.shields.io/github/v/release/mtuska/diversion-vscode?include_prereleases&sort=semver)](https://github.com/mtuska/diversion-vscode/releases/latest)
 [![Release workflow](https://github.com/mtuska/diversion-vscode/actions/workflows/release.yml/badge.svg)](https://github.com/mtuska/diversion-vscode/actions/workflows/release.yml)
 [![CI](https://github.com/mtuska/diversion-vscode/actions/workflows/ci.yml/badge.svg?event=pull_request)](https://github.com/mtuska/diversion-vscode/actions/workflows/ci.yml)
 
 Source-control integration for [Diversion](https://www.diversion.dev) — registers Diversion as a first-class SCM provider so you can commit, branch, diff, switch, and merge from inside VS Code.
 
-> **Status: v0.3.x.** Tested against `dv v0.9.x` on VS Code 1.93+. Coexists peacefully with the built-in Git provider; activates whenever the open folder lives inside (or is) a Diversion-managed workspace.
+> **Status: v0.4.x.** Available on the [VS Marketplace](https://marketplace.visualstudio.com/items?itemName=mtuska.diversion-vscode). Tested against `dv v0.9.x` on VS Code 1.95+. Coexists peacefully with the built-in Git provider; activates whenever the open folder lives inside (or is) a Diversion-managed workspace.
 
 ## Requirements
 
@@ -17,26 +19,30 @@ Source-control integration for [Diversion](https://www.diversion.dev) — regist
   — opening a sub-directory of a `.diversion/`-marked tree works too; we
   walk up to find the actual repo root.
 - The Diversion daemon running locally (it is when `dv status` works).
-- VS Code 1.93 or newer.
+- VS Code 1.95 or newer.
 
 ## Installing
 
-There's no Marketplace publication yet. Three options:
+### Option 1: VS Marketplace (recommended)
 
-### Option 1: install the latest `.vsix` from a release
+Install directly from the [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=mtuska.diversion-vscode), or from the command line:
+
+```bash
+code --install-extension mtuska.diversion-vscode
+```
+
+You can also search for **Diversion** in the VS Code Extensions view (`Ctrl+Shift+X` / `Cmd+Shift+X`).
+
+### Option 2: install the latest `.vsix` from a release
 
 Download the `.vsix` from the [Releases page](https://github.com/mtuska/diversion-vscode/releases),
 then:
 
 ```bash
-# macOS / Linux
-code --install-extension diversion-vscode-<version>.vsix
-
-# Windows (PowerShell or cmd)
 code --install-extension diversion-vscode-<version>.vsix
 ```
 
-### Option 2: build from source
+### Option 3: build from source
 
 ```bash
 git clone https://github.com/mtuska/diversion-vscode.git
@@ -46,7 +52,7 @@ npm run package          # produces diversion-vscode-<version>.vsix
 code --install-extension diversion-vscode-*.vsix
 ```
 
-### Option 3: run unpacked from source (development)
+### Option 4: run unpacked from source (development)
 
 ```bash
 git clone https://github.com/mtuska/diversion-vscode.git
@@ -98,6 +104,9 @@ the daemon and `dv` itself are responding the way we expect.
   reloads.
 - Commit picks the staged paths if any are staged, otherwise commits all
   (`dv commit <paths> -m` / `dv commit -a -m`).
+- **Generate Commit Message** (sparkle button on the SCM input box) hands the
+  current diff to your configured VS Code language model and drops the
+  result into the commit message box.
 - QuickDiff (gutter + side-by-side) via reverse-applied unified diff. Binary
   files skip the diff path and open directly.
 
@@ -136,6 +145,19 @@ the daemon and `dv` itself are responding the way we expect.
   first session.
 - `Diversion: Run Performance Trace` runs a known battery and writes
   per-step timings to the output channel, useful for triage.
+- `diversion.maxParallelProcesses` caps concurrent `dv` invocations (default
+  4). Bump it on fast machines to speed up SCM Graph prefetch.
+
+**Language Model Tools**
+
+Exposes four read-only tools to GitHub Copilot Chat and any other VS Code
+language-model client, so the model can answer questions about your
+Diversion workspace without you copy-pasting:
+
+- `#dvStatus` — branch, commit, sync state, and working-tree changes.
+- `#dvDiff` — unified diff of the working tree (optionally scoped to paths).
+- `#dvLog` — recent commits with messages, authors, dates, and branch refs.
+- `#dvBranches` — all branches with their tip commit IDs.
 
 **Not implemented yet**
 - Selective sync editor (`dv preferences sync_paths_rules`).
@@ -169,11 +191,14 @@ node scripts/smoke-detect.mjs ~/Diversion/MyRepo
 
 | Setting | Default | Description |
 |---|---|---|
-| `diversion.path` | `""` | Path to the `dv` binary. Empty uses platform default (`dv` on POSIX, `dv.exe` on Windows). |
-| `diversion.daemonUrl` | `""` | Override the daemon URL. Empty discovers from `~/.diversion/.port`. |
-| `diversion.refresh.debounceMs` | `300` | Debounce window (ms) for auto-refresh after file changes. |
+| `diversion.path` | `""` | Path to the `dv` binary. Empty uses the system `PATH` lookup. |
+| `diversion.daemonUrl` | `""` | Override the daemon URL (e.g. `http://127.0.0.1:38825`). Empty discovers from `~/.diversion/.port`. |
+| `diversion.refresh.debounceMs` | `150` | Debounce window (ms) for filesystem-watcher-driven SCM refresh. Editor-originated events (save/create/delete/rename) bypass this and refresh immediately. |
+| `diversion.maxParallelProcesses` | `4` | Cap on concurrent `dv` CLI processes (1–32). Higher = faster bulk operations, more CPU and daemon load. |
+| `diversion.binaryExtensions` | `[]` | Extra file extensions (with leading dot, e.g. `".uplugin"`) to treat as binary — they skip side-by-side diff and open directly. |
+| `diversion.scm.showAllRepoChanges` | `false` | When opening a sub-directory of a repo, the SCM panel scopes changes to that folder by default. Enable to see *all* changes in the repo. |
+| `diversion.repositoryScanMaxDepth` | `1` | How many directory levels below each workspace folder to scan for nested `.diversion` repos. `0` disables nested scanning. Mirrors `git.repositoryScanMaxDepth`. |
 | `diversion.log.level` | `"info"` | Output channel verbosity (`off`/`error`/`warn`/`info`/`debug`). |
-| `diversion.binaryExtensions` | `[]` | Extra file extensions to treat as binary (skip side-by-side diff, open directly). |
 
 ## Architecture
 
