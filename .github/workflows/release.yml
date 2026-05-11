@@ -90,3 +90,30 @@ jobs:
               --generate-notes \
               "$VSIX"
           fi
+
+      # Guard against accidental publisher/name renames in package.json — the
+      # .vsix must match the expected marketplace listing (vars.VSCE_EXTENSION_ID,
+      # e.g. "mtuska.diversion-vscode") or we abort before publishing.
+      - name: Verify package.json matches expected extension id
+        env:
+          EXPECTED_ID: ${{ vars.VSCE_EXTENSION_ID }}
+        run: |
+          if [ -z "$EXPECTED_ID" ]; then
+            echo "::error::Repository variable VSCE_EXTENSION_ID is not set (expected e.g. mtuska.diversion-vscode)"
+            exit 1
+          fi
+          actual_id=$(node -p "const p=require('./package.json'); p.publisher + '.' + p.name")
+          if [ "$actual_id" != "$EXPECTED_ID" ]; then
+            echo "::error::package.json extension id '$actual_id' does not match expected '$EXPECTED_ID'"
+            exit 1
+          fi
+          echo "Confirmed extension id is $actual_id"
+
+      # Publishes the same .vsix that was just attached to the GitHub release.
+      # Only runs for tag pushes or manual workflow_dispatch — never PRs, since
+      # this workflow has no pull_request trigger.
+      - name: Publish to VS Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+          VSIX: ${{ steps.vsix.outputs.file }}
+        run: npx vsce publish --no-dependencies --packagePath "$VSIX"
