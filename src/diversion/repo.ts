@@ -1,7 +1,6 @@
-import * as vscode from 'vscode';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { runDv, runDvOrThrow } from './cli.js';
+import { runDv, runDvOrThrow, type CancellationLike } from './cli.js';
 import { listFilesRecursive } from '../util/walk.js';
 import { parseStatus, type ParsedStatus } from './parsers/status.js';
 import { parseDiffNameStatus } from './parsers/diffNameStatus.js';
@@ -10,6 +9,8 @@ import { parseLogOneline, parseLogFull, type CommitSummary, type CommitDetails }
 import { parseLockList, type LockInfo } from './parsers/lock.js';
 import { parseShelfList, type ShelfInfo } from './parsers/shelf.js';
 import { parseAnnotation, type Annotation } from './parsers/annotate.js';
+import { parseTagList, type TagInfo } from './parsers/tag.js';
+import { parseRepoList, type RepoListEntry } from './parsers/repoList.js';
 import { findSyncConflicts, type SyncConflict } from './conflicts.js';
 import type { DaemonClient } from './daemon.js';
 import type {
@@ -18,7 +19,7 @@ import type {
   WorkspaceSyncProgress,
   WorkspaceSyncStatus,
 } from './types.js';
-import type { Logger } from '../util/log.js';
+import type { LoggerLike } from '../util/logCore.js';
 
 export interface RepoState {
   identity: RepoIdentity;
@@ -45,7 +46,7 @@ export class Repo {
     private readonly daemon: DaemonClient,
     private readonly identity: RepoIdentity,
     private dvPath: string | undefined,
-    private readonly logger: Logger,
+    private readonly logger: LoggerLike,
   ) {}
 
   get root(): string { return this.identity.workspacePath; }
@@ -133,7 +134,7 @@ export class Repo {
    * totals). Both are run in parallel, alongside a fast workspace scan for
    * `*.dv-conflict*` sidecar files.
    */
-  async getState(token?: vscode.CancellationToken): Promise<RepoState> {
+  async getState(token?: CancellationLike): Promise<RepoState> {
     const [statusResult, diffResult, conflicts] = await Promise.all([
       runDvOrThrow(['status'], { cwd: this.root, dvPath: this.dvPath, token }),
       runDvOrThrow(['diff', '--name-status', '--color', 'never'], {
@@ -313,6 +314,104 @@ export class Repo {
       cwd: this.root, dvPath: this.dvPath,
     });
     return parseLogFull(r.stdout);
+  }
+
+  /**
+   * Extended log accepting an optional path-scope and date filters. dv's
+   * `log` command takes a path positional argument plus `--since` /
+   * `--until` (ISO date or relative — "1 week ago"). Used by both
+   * "history of file X" and "what's been committed lately" flows.
+   */
+  async logFiltered(opts: {
+    path?: string;
+    limit?: number;
+    since?: string;
+    until?: string;
+  } = {}): Promise<CommitDetails[]> {
+    const args: string[] = ['log'];
+    if (opts.path) args.push(opts.path);
+    args.push('-n', String(opts.limit ?? 20));
+    args.push('--date', 'iso');
+    if (opts.since) args.push('--since', opts.since);
+    if (opts.until) args.push('--until', opts.until);
+    const r = await runDvOrThrow(args, { cwd: this.root, dvPath: this.dvPath });
+    return parseLogFull(r.stdout);
+  }
+
+  /**
+   * Identify recent commits that touch the same paths the user has
+   * uncommitted changes in — the "what might conflict with my working
+   * tree" awareness signal. Diversion has no native equivalent of git's
+   * `--name-only --intersect` so we do it ourselves: fetch the last
+   * `lookback` commits, then ask `dv show --name-status` for each and
+   * intersect their changed paths with our dirty set.
+   *
+   * Cost is O(lookback) dv invocations — bounded by the caller. The
+   * semaphore in cli.ts caps real concurrency so we don't blow up the
+   * agent.
+   */
+  async overlappingCommits(opts: {
+    lookback?: number;
+    since?: string;
+  } = {}): Promise<Array<{ commit: CommitDetails; touched: string[] }>> {
+    const state = await this.getState();
+    const dirty = new Set(state.changes.map((c) => c.path));
+    if (dirty.size === 0) return [];
+
+    const commits = await this.logFiltered({
+      limit: opts.lookback ?? 50,
+      ...(opts.since ? { since: opts.since } : {}),
+    });
+
+    const results = await Promise.all(commits.map(async (c) => {
+      const changes = await this.fileChangesForCommit(c.id).catch(() => []);
+      const touched = changes.map((f) => f.path).filter((p) => dirty.has(p));
+      return { commit: c, touched };
+    }));
+    return results.filter((r) => r.touched.length > 0);
+  }
+
+  /** Per-file history — `dv log <path>` with optional limit. */
+  async fileHistory(relPath: string, limit = 20): Promise<CommitDetails[]> {
+    return this.logFiltered({ path: relPath, limit });
+  }
+
+  /** List all tags in the repo. dv supports `--json` here, so we parse cleanly. */
+  async listTags(): Promise<TagInfo[]> {
+    const r = await runDvOrThrow(['tag', '--json'], { cwd: this.root, dvPath: this.dvPath });
+    return parseTagList(r.stdout);
+  }
+
+  /** Delete a branch. The default branch cannot be deleted. */
+  async deleteBranch(branch: string): Promise<void> {
+    await runDvOrThrow(['branch', '-d', branch, '-f'], {
+      cwd: this.root, dvPath: this.dvPath, timeoutMs: 30_000,
+    });
+  }
+
+  /** Rename a branch. */
+  async renameBranch(branch: string, newName: string): Promise<void> {
+    await runDvOrThrow(['branch', '-r', branch, newName], {
+      cwd: this.root, dvPath: this.dvPath, timeoutMs: 30_000,
+    });
+  }
+
+  /**
+   * List repos visible to the authenticated dv user — locally-cloned and
+   * remote. Surfaces "what does this account have access to?" without
+   * touching the cloud CoreAPI ourselves.
+   */
+  async listCloudRepos(): Promise<RepoListEntry[]> {
+    const r = await runDvOrThrow(['repo'], { cwd: this.root, dvPath: this.dvPath });
+    return parseRepoList(r.stdout);
+  }
+
+  /** Show the contents of a single shelf (raw dv text — format is human-formatted). */
+  async showShelf(shelf: string): Promise<string> {
+    const r = await runDvOrThrow(['shelf', 'show', shelf], {
+      cwd: this.root, dvPath: this.dvPath, timeoutMs: 30_000,
+    });
+    return r.stdout;
   }
 
   /**

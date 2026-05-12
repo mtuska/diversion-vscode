@@ -2,7 +2,7 @@
   "name": "diversion-vscode",
   "displayName": "Diversion",
   "description": "Source control integration for Diversion (https://www.diversion.dev) — register Diversion as a first-class SCM provider in VS Code.",
-  "version": "0.4.7",
+  "version": "0.5.0",
   "publisher": "mtuska",
   "license": "Unlicense",
   "repository": {
@@ -24,6 +24,9 @@
     "SCM Providers"
   ],
   "main": "./out/extension.js",
+  "bin": {
+    "diversion-mcp": "./out/mcp.js"
+  },
   "activationEvents": [
     "workspaceContains:.diversion",
     "workspaceContains:**/.diversion",
@@ -323,7 +326,9 @@
         },
         "diversion.binaryExtensions": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "default": [],
           "description": "Additional file extensions (with leading dot, e.g. \".uplugin\") to treat as binary on top of the built-in list. Binary files skip the side-by-side diff view and open directly."
         },
@@ -341,7 +346,13 @@
         },
         "diversion.log.level": {
           "type": "string",
-          "enum": ["off", "error", "warn", "info", "debug"],
+          "enum": [
+            "off",
+            "error",
+            "warn",
+            "info",
+            "debug"
+          ],
           "default": "info",
           "description": "Verbosity of the Diversion output channel."
         }
@@ -358,54 +369,184 @@
     },
     "menus": {
       "view/title": [
-        { "command": "diversion.createShelf", "when": "view == diversion.shelves", "group": "navigation@1" },
-        { "command": "diversion.refreshShelves", "when": "view == diversion.shelves", "group": "navigation@2" }
+        {
+          "command": "diversion.createShelf",
+          "when": "view == diversion.shelves",
+          "group": "navigation@1"
+        },
+        {
+          "command": "diversion.refreshShelves",
+          "when": "view == diversion.shelves",
+          "group": "navigation@2"
+        }
       ],
       "view/item/context": [
-        { "command": "diversion.applyShelf", "when": "view == diversion.shelves && viewItem == diversion.shelf", "group": "1_actions@1" },
-        { "command": "diversion.applyShelf", "when": "view == diversion.shelves && viewItem == diversion.shelf", "group": "inline@1" },
-        { "command": "diversion.renameShelf", "when": "view == diversion.shelves && viewItem == diversion.shelf", "group": "1_actions@2" },
-        { "command": "diversion.deleteShelf", "when": "view == diversion.shelves && viewItem == diversion.shelf", "group": "1_actions@3" },
-        { "command": "diversion.deleteShelf", "when": "view == diversion.shelves && viewItem == diversion.shelf", "group": "inline@2" }
+        {
+          "command": "diversion.applyShelf",
+          "when": "view == diversion.shelves && viewItem == diversion.shelf",
+          "group": "1_actions@1"
+        },
+        {
+          "command": "diversion.applyShelf",
+          "when": "view == diversion.shelves && viewItem == diversion.shelf",
+          "group": "inline@1"
+        },
+        {
+          "command": "diversion.renameShelf",
+          "when": "view == diversion.shelves && viewItem == diversion.shelf",
+          "group": "1_actions@2"
+        },
+        {
+          "command": "diversion.deleteShelf",
+          "when": "view == diversion.shelves && viewItem == diversion.shelf",
+          "group": "1_actions@3"
+        },
+        {
+          "command": "diversion.deleteShelf",
+          "when": "view == diversion.shelves && viewItem == diversion.shelf",
+          "group": "inline@2"
+        }
       ],
       "scm/title": [
-        { "command": "diversion.commit", "when": "scmProvider == diversion", "group": "navigation@1" },
-        { "command": "diversion.refresh", "when": "scmProvider == diversion", "group": "navigation@2" },
-
-        { "command": "diversion.commit", "when": "scmProvider == diversion", "group": "1_commit@1" },
-        { "command": "diversion.commitToNewBranch", "when": "scmProvider == diversion", "group": "1_commit@2" }
+        {
+          "command": "diversion.commit",
+          "when": "scmProvider == diversion",
+          "group": "navigation@1"
+        },
+        {
+          "command": "diversion.refresh",
+          "when": "scmProvider == diversion",
+          "group": "navigation@2"
+        },
+        {
+          "command": "diversion.commit",
+          "when": "scmProvider == diversion",
+          "group": "1_commit@1"
+        },
+        {
+          "command": "diversion.commitToNewBranch",
+          "when": "scmProvider == diversion",
+          "group": "1_commit@2"
+        }
       ],
       "scm/inputBox": [
-        { "command": "diversion.generateCommitMessage", "when": "scmProvider == diversion", "group": "navigation@1" }
+        {
+          "command": "diversion.generateCommitMessage",
+          "when": "scmProvider == diversion",
+          "group": "navigation@1"
+        }
       ],
       "scm/sourceControl": [
-        { "command": "diversion.commit", "when": "scmProvider == diversion", "group": "1_actions@1" },
-        { "command": "diversion.discardAll", "when": "scmProvider == diversion", "group": "1_actions@2" },
-        { "command": "diversion.refresh", "when": "scmProvider == diversion", "group": "1_actions@3" },
-
-        { "command": "diversion.switchBranch", "when": "scmProvider == diversion", "group": "2_branch@1" },
-        { "command": "diversion.createBranch", "when": "scmProvider == diversion", "group": "2_branch@2" },
-        { "command": "diversion.merge", "when": "scmProvider == diversion", "group": "2_branch@3" },
-
-        { "command": "diversion.updateWorkspace", "when": "scmProvider == diversion", "group": "3_sync@1" },
-        { "command": "diversion.pauseSync", "when": "scmProvider == diversion", "group": "3_sync@2" },
-        { "command": "diversion.resumeSync", "when": "scmProvider == diversion", "group": "3_sync@3" },
-
-        { "command": "diversion.lockFile", "when": "scmProvider == diversion", "group": "4_locks@1" },
-        { "command": "diversion.unlockFile", "when": "scmProvider == diversion", "group": "4_locks@2" },
-        { "command": "diversion.listLocks", "when": "scmProvider == diversion", "group": "4_locks@3" },
-
-        { "command": "diversion.createShelf", "when": "scmProvider == diversion", "group": "5_shelves@1" },
-        { "command": "diversion.applyShelf", "when": "scmProvider == diversion", "group": "5_shelves@2" },
-        { "command": "diversion.shelveAndSwitchBranch", "when": "scmProvider == diversion", "group": "5_shelves@3" },
-
-        { "command": "diversion.viewHistory", "when": "scmProvider == diversion", "group": "5_view@2" },
-        { "command": "diversion.openInWeb", "when": "scmProvider == diversion", "group": "5_view@3" },
-        { "command": "diversion.toggleBlame", "when": "scmProvider == diversion", "group": "5_view@4" },
-        { "command": "diversion.verify", "when": "scmProvider == diversion", "group": "5_view@5" },
-        { "command": "diversion.daemonHealth", "when": "scmProvider == diversion", "group": "5_view@6" },
-        { "command": "diversion.perfTrace", "when": "scmProvider == diversion", "group": "5_view@7" },
-        { "command": "diversion.showOutput", "when": "scmProvider == diversion", "group": "5_view@8" }
+        {
+          "command": "diversion.commit",
+          "when": "scmProvider == diversion",
+          "group": "1_actions@1"
+        },
+        {
+          "command": "diversion.discardAll",
+          "when": "scmProvider == diversion",
+          "group": "1_actions@2"
+        },
+        {
+          "command": "diversion.refresh",
+          "when": "scmProvider == diversion",
+          "group": "1_actions@3"
+        },
+        {
+          "command": "diversion.switchBranch",
+          "when": "scmProvider == diversion",
+          "group": "2_branch@1"
+        },
+        {
+          "command": "diversion.createBranch",
+          "when": "scmProvider == diversion",
+          "group": "2_branch@2"
+        },
+        {
+          "command": "diversion.merge",
+          "when": "scmProvider == diversion",
+          "group": "2_branch@3"
+        },
+        {
+          "command": "diversion.updateWorkspace",
+          "when": "scmProvider == diversion",
+          "group": "3_sync@1"
+        },
+        {
+          "command": "diversion.pauseSync",
+          "when": "scmProvider == diversion",
+          "group": "3_sync@2"
+        },
+        {
+          "command": "diversion.resumeSync",
+          "when": "scmProvider == diversion",
+          "group": "3_sync@3"
+        },
+        {
+          "command": "diversion.lockFile",
+          "when": "scmProvider == diversion",
+          "group": "4_locks@1"
+        },
+        {
+          "command": "diversion.unlockFile",
+          "when": "scmProvider == diversion",
+          "group": "4_locks@2"
+        },
+        {
+          "command": "diversion.listLocks",
+          "when": "scmProvider == diversion",
+          "group": "4_locks@3"
+        },
+        {
+          "command": "diversion.createShelf",
+          "when": "scmProvider == diversion",
+          "group": "5_shelves@1"
+        },
+        {
+          "command": "diversion.applyShelf",
+          "when": "scmProvider == diversion",
+          "group": "5_shelves@2"
+        },
+        {
+          "command": "diversion.shelveAndSwitchBranch",
+          "when": "scmProvider == diversion",
+          "group": "5_shelves@3"
+        },
+        {
+          "command": "diversion.viewHistory",
+          "when": "scmProvider == diversion",
+          "group": "5_view@2"
+        },
+        {
+          "command": "diversion.openInWeb",
+          "when": "scmProvider == diversion",
+          "group": "5_view@3"
+        },
+        {
+          "command": "diversion.toggleBlame",
+          "when": "scmProvider == diversion",
+          "group": "5_view@4"
+        },
+        {
+          "command": "diversion.verify",
+          "when": "scmProvider == diversion",
+          "group": "5_view@5"
+        },
+        {
+          "command": "diversion.daemonHealth",
+          "when": "scmProvider == diversion",
+          "group": "5_view@6"
+        },
+        {
+          "command": "diversion.perfTrace",
+          "when": "scmProvider == diversion",
+          "group": "5_view@7"
+        },
+        {
+          "command": "diversion.showOutput",
+          "when": "scmProvider == diversion",
+          "group": "5_view@8"
+        }
       ],
       "scm/resourceState/context": [
         {
@@ -413,7 +554,6 @@
           "when": "scmProvider == diversion",
           "group": "navigation"
         },
-
         {
           "command": "diversion.openFile",
           "when": "scmProvider == diversion",
@@ -439,7 +579,6 @@
           "when": "scmProvider == diversion && scmResourceState == conflict",
           "group": "inline@3"
         },
-
         {
           "command": "diversion.stage",
           "when": "scmProvider == diversion && scmResourceState =~ /^unstaged-/",
@@ -494,19 +633,51 @@
         }
       ],
       "scm/historyItem/context": [
-        { "command": "diversion.openCommitInWeb", "when": "scmProvider == diversion", "group": "1_open@1" },
-
-        { "command": "diversion.checkoutBranchAtCommit", "when": "scmProvider == diversion", "group": "2_checkout@1" },
-
-        { "command": "diversion.createTagAtCommit", "when": "scmProvider == diversion", "group": "3_modification@1" },
-        { "command": "diversion.cherryPickCommit", "when": "scmProvider == diversion", "group": "3_modification@2" },
-        { "command": "diversion.revertCommit", "when": "scmProvider == diversion", "group": "3_modification@3" },
-        { "command": "diversion.revertToCommit", "when": "scmProvider == diversion", "group": "3_modification@4" },
-
-        { "command": "diversion.compareWithCommit", "when": "scmProvider == diversion", "group": "4_compare@1" },
-
-        { "command": "diversion.copyCommitId", "when": "scmProvider == diversion", "group": "9_copy@1" },
-        { "command": "diversion.copyCommitMessage", "when": "scmProvider == diversion", "group": "9_copy@2" }
+        {
+          "command": "diversion.openCommitInWeb",
+          "when": "scmProvider == diversion",
+          "group": "1_open@1"
+        },
+        {
+          "command": "diversion.checkoutBranchAtCommit",
+          "when": "scmProvider == diversion",
+          "group": "2_checkout@1"
+        },
+        {
+          "command": "diversion.createTagAtCommit",
+          "when": "scmProvider == diversion",
+          "group": "3_modification@1"
+        },
+        {
+          "command": "diversion.cherryPickCommit",
+          "when": "scmProvider == diversion",
+          "group": "3_modification@2"
+        },
+        {
+          "command": "diversion.revertCommit",
+          "when": "scmProvider == diversion",
+          "group": "3_modification@3"
+        },
+        {
+          "command": "diversion.revertToCommit",
+          "when": "scmProvider == diversion",
+          "group": "3_modification@4"
+        },
+        {
+          "command": "diversion.compareWithCommit",
+          "when": "scmProvider == diversion",
+          "group": "4_compare@1"
+        },
+        {
+          "command": "diversion.copyCommitId",
+          "when": "scmProvider == diversion",
+          "group": "9_copy@1"
+        },
+        {
+          "command": "diversion.copyCommitMessage",
+          "when": "scmProvider == diversion",
+          "group": "9_copy@2"
+        }
       ],
       "scm/resourceGroup/context": [
         {
@@ -573,10 +744,7 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "repo": {
-              "type": "string",
-              "description": "Optional. Repository name (e.g. 'MyProject') or an absolute filesystem path inside the repo. Required if multiple Diversion repos are open in the workspace; omit when there is only one."
-            }
+            "repo": { "type": "string", "description": "Optional. Repository name (e.g. 'MyProject') or an absolute filesystem path inside the repo. Required if multiple Diversion repos are open in the workspace; omit when there is only one." }
           }
         }
       },
@@ -592,22 +760,34 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "repo": {
-              "type": "string",
-              "description": "Optional. Repository name or an absolute filesystem path inside the repo. Required if multiple Diversion repos are open."
-            },
-            "paths": {
-              "type": "array",
-              "items": { "type": "string" },
-              "description": "Optional list of repo-relative file or directory paths to scope the diff to. Omit to diff the entire working tree."
-            }
+            "repo": { "type": "string", "description": "Optional. Repository name or absolute path inside the repo." },
+            "paths": { "type": "array", "items": { "type": "string" }, "description": "Optional list of repo-relative file or directory paths to scope the diff to. Omit to diff the entire working tree." }
+          }
+        }
+      },
+      {
+        "name": "diversion_diff_refs",
+        "displayName": "Diversion: Diff Between Refs",
+        "modelDescription": "Returns the unified diff between two refs (commits, branches, or tags). Use this to compare branches or see what changed between two commits.",
+        "userDescription": "Diff between two Diversion refs.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "dvDiffRefs",
+        "tags": ["diversion", "scm"],
+        "icon": "$(diff)",
+        "inputSchema": {
+          "type": "object",
+          "required": ["base", "compare"],
+          "properties": {
+            "repo": { "type": "string", "description": "Optional. Repository name or absolute path inside the repo." },
+            "base": { "type": "string", "description": "Base ref (commit / branch / tag)." },
+            "compare": { "type": "string", "description": "Ref to compare against base." }
           }
         }
       },
       {
         "name": "diversion_log",
         "displayName": "Diversion: Commit Log",
-        "modelDescription": "Returns recent commits in the current branch with full message bodies, author, date, and any branch refs at each commit. Use this for history queries, changelog generation, or to find a specific past change.",
+        "modelDescription": "Returns recent commits in the current branch with full message bodies, author, date, and any branch refs at each commit. Use this for history queries, changelog generation, or to find a specific past change. Supports `since` / `until` filters (ISO or relative date like '1 week ago').",
         "userDescription": "Show recent commits in a Diversion repo.",
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "dvLog",
@@ -616,16 +796,67 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "repo": {
-              "type": "string",
-              "description": "Optional. Repository name or an absolute filesystem path inside the repo. Required if multiple Diversion repos are open."
-            },
-            "limit": {
-              "type": "number",
-              "description": "Maximum number of commits to return. Default 20, max 200.",
-              "minimum": 1,
-              "maximum": 200
-            }
+            "repo": { "type": "string" },
+            "limit": { "type": "number", "minimum": 1, "maximum": 1000 },
+            "since": { "type": "string", "description": "ISO date or relative ('1 week ago')." },
+            "until": { "type": "string" }
+          }
+        }
+      },
+      {
+        "name": "diversion_file_history",
+        "displayName": "Diversion: File History",
+        "modelDescription": "Returns commits that touched a specific file or directory. Equivalent to `git log -- <path>`. Use this when the user asks 'who changed file X', 'when was Y last modified', or wants the history of a single file.",
+        "userDescription": "Show the commit history of a specific file or directory.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "dvFileHistory",
+        "tags": ["diversion", "scm"],
+        "icon": "$(history)",
+        "inputSchema": {
+          "type": "object",
+          "required": ["path"],
+          "properties": {
+            "repo": { "type": "string" },
+            "path": { "type": "string", "description": "Repo-relative file or directory path." },
+            "limit": { "type": "number", "minimum": 1, "maximum": 1000 },
+            "since": { "type": "string" },
+            "until": { "type": "string" }
+          }
+        }
+      },
+      {
+        "name": "diversion_overlapping_commits",
+        "displayName": "Diversion: Commits Touching My Dirty Paths",
+        "modelDescription": "Returns recent commits on the current branch that touched the SAME paths the user has uncommitted working-tree changes in. This is the 'what might conflict with my work' awareness signal — use it before committing or before suggesting a merge to surface where the user's changes overlap with other recent activity.",
+        "userDescription": "Find recent commits that overlap with my working-tree changes.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "dvOverlap",
+        "tags": ["diversion", "scm"],
+        "icon": "$(warning)",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "repo": { "type": "string" },
+            "lookback": { "type": "number", "minimum": 1, "maximum": 500, "description": "How many recent commits to scan. Default 50." },
+            "since": { "type": "string" }
+          }
+        }
+      },
+      {
+        "name": "diversion_show",
+        "displayName": "Diversion: Show Commit",
+        "modelDescription": "Returns full details for a single commit: author, date, message, refs, and the list of files it changed.",
+        "userDescription": "Show details for a Diversion commit.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "dvShow",
+        "tags": ["diversion", "scm"],
+        "icon": "$(git-commit)",
+        "inputSchema": {
+          "type": "object",
+          "required": ["commit"],
+          "properties": {
+            "repo": { "type": "string" },
+            "commit": { "type": "string", "description": "Commit ID (e.g. 'dv.commit.42')." }
           }
         }
       },
@@ -640,13 +871,476 @@
         "icon": "$(git-branch)",
         "inputSchema": {
           "type": "object",
+          "properties": { "repo": { "type": "string" } }
+        }
+      },
+      {
+        "name": "diversion_list_tags",
+        "displayName": "Diversion: List Tags",
+        "modelDescription": "Lists every tag in the repo with its commit pointer and description. Backed by `dv tag --json` for stable structured output.",
+        "userDescription": "List tags in a Diversion repo.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "dvListTags",
+        "tags": ["diversion", "scm"],
+        "icon": "$(tag)",
+        "inputSchema": { "type": "object", "properties": { "repo": { "type": "string" } } }
+      },
+      {
+        "name": "diversion_list_cloud_repos",
+        "displayName": "Diversion: List Cloud-accessible Repos",
+        "modelDescription": "Lists repositories the authenticated dv account has access to, partitioned into locally-cloned vs remote-only. Useful for discovery before cloning a new repo.",
+        "userDescription": "List repos accessible to my Diversion account.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "dvListCloudRepos",
+        "tags": ["diversion", "scm"],
+        "icon": "$(repo)",
+        "inputSchema": { "type": "object", "properties": { "repo": { "type": "string" } } }
+      },
+      {
+        "name": "diversion_shelves",
+        "displayName": "Diversion: List Shelves",
+        "modelDescription": "Lists every shelf saved in the Diversion repository with its description / metadata.",
+        "userDescription": "List shelves in a Diversion repo.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "dvShelves",
+        "tags": ["diversion", "scm"],
+        "icon": "$(archive)",
+        "inputSchema": { "type": "object", "properties": { "repo": { "type": "string" } } }
+      },
+      {
+        "name": "diversion_show_shelf",
+        "displayName": "Diversion: Show Shelf Contents",
+        "modelDescription": "Shows the changes contained in a single shelf (raw dv output).",
+        "userDescription": "Inspect a Diversion shelf.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "dvShowShelf",
+        "tags": ["diversion", "scm"],
+        "inputSchema": {
+          "type": "object",
+          "required": ["shelf"],
           "properties": {
-            "repo": {
-              "type": "string",
-              "description": "Optional. Repository name or an absolute filesystem path inside the repo. Required if multiple Diversion repos are open."
-            }
+            "repo": { "type": "string" },
+            "shelf": { "type": "string" }
           }
         }
+      },
+      {
+        "name": "diversion_locks",
+        "displayName": "Diversion: List Locks",
+        "modelDescription": "Lists every hard lock visible to the workspace, with holder if known. Use this before editing binary assets that may be exclusively locked.",
+        "userDescription": "List active locks in a Diversion repo.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "dvLocks",
+        "tags": ["diversion", "scm"],
+        "icon": "$(lock)",
+        "inputSchema": { "type": "object", "properties": { "repo": { "type": "string" } } }
+      },
+      {
+        "name": "diversion_annotate",
+        "displayName": "Diversion: Per-line Blame",
+        "modelDescription": "Returns per-line attribution (commit / author / date) for a single text file in the workspace. Equivalent to git blame.",
+        "userDescription": "Show per-line blame for a file.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "dvAnnotate",
+        "tags": ["diversion", "scm"],
+        "icon": "$(eye)",
+        "inputSchema": {
+          "type": "object",
+          "required": ["path"],
+          "properties": {
+            "repo": { "type": "string" },
+            "path": { "type": "string", "description": "Repo-relative path to the file." }
+          }
+        }
+      },
+      {
+        "name": "diversion_commit",
+        "displayName": "Diversion: Commit Changes",
+        "modelDescription": "Commits working-tree changes in a Diversion repo. Pass `paths` to commit a subset; omit for everything. The commit message is required. Diversion auto-syncs after a successful commit.",
+        "userDescription": "Commit working-tree changes.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "dvCommit",
+        "tags": ["diversion", "scm"],
+        "icon": "$(check)",
+        "inputSchema": {
+          "type": "object",
+          "required": ["message"],
+          "properties": {
+            "repo": { "type": "string" },
+            "message": { "type": "string", "description": "Commit message." },
+            "paths": { "type": "array", "items": { "type": "string" }, "description": "Optional repo-relative paths to scope the commit to. Omit for all changes." }
+          }
+        }
+      },
+      {
+        "name": "diversion_create_branch",
+        "displayName": "Diversion: Create Branch",
+        "modelDescription": "Creates a new Diversion branch from the current branch. By default switches to the new branch.",
+        "userDescription": "Create a Diversion branch.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "dvCreateBranch",
+        "tags": ["diversion", "scm"],
+        "icon": "$(git-branch-create)",
+        "inputSchema": {
+          "type": "object",
+          "required": ["name"],
+          "properties": {
+            "repo": { "type": "string" },
+            "name": { "type": "string", "description": "New branch name." },
+            "switchTo": { "type": "boolean", "description": "Switch to the new branch (default true)." }
+          }
+        }
+      },
+      {
+        "name": "diversion_delete_branch",
+        "displayName": "Diversion: Delete Branch",
+        "modelDescription": "Deletes a branch (by name or ID). The default branch cannot be deleted.",
+        "userDescription": "Delete a Diversion branch.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "dvDeleteBranch",
+        "tags": ["diversion", "scm"],
+        "icon": "$(trash)",
+        "inputSchema": {
+          "type": "object",
+          "required": ["branch"],
+          "properties": {
+            "repo": { "type": "string" },
+            "branch": { "type": "string" }
+          }
+        }
+      },
+      {
+        "name": "diversion_rename_branch",
+        "displayName": "Diversion: Rename Branch",
+        "modelDescription": "Renames an existing branch.",
+        "userDescription": "Rename a Diversion branch.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "dvRenameBranch",
+        "tags": ["diversion", "scm"],
+        "inputSchema": {
+          "type": "object",
+          "required": ["branch", "newName"],
+          "properties": {
+            "repo": { "type": "string" },
+            "branch": { "type": "string" },
+            "newName": { "type": "string" }
+          }
+        }
+      },
+      {
+        "name": "diversion_checkout",
+        "displayName": "Diversion: Checkout Ref",
+        "modelDescription": "Checks out a branch, tag, or commit. Set takeChanges / shelveChanges / discardChanges to control what happens to uncommitted working-tree changes (only one may be true).",
+        "userDescription": "Check out a ref in a Diversion repo.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "dvCheckout",
+        "tags": ["diversion", "scm"],
+        "icon": "$(git-branch)",
+        "inputSchema": {
+          "type": "object",
+          "required": ["ref"],
+          "properties": {
+            "repo": { "type": "string" },
+            "ref": { "type": "string", "description": "Branch name, tag, or commit ID." },
+            "takeChanges": { "type": "boolean" },
+            "shelveChanges": { "type": "boolean" },
+            "discardChanges": { "type": "boolean" }
+          }
+        }
+      },
+      {
+        "name": "diversion_merge",
+        "displayName": "Diversion: Merge Ref",
+        "modelDescription": "Merges the given ref into the currently checked-out branch.",
+        "userDescription": "Merge a ref into the current branch.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "dvMerge",
+        "tags": ["diversion", "scm"],
+        "icon": "$(git-merge)",
+        "inputSchema": {
+          "type": "object",
+          "required": ["ref"],
+          "properties": {
+            "repo": { "type": "string" },
+            "ref": { "type": "string", "description": "Branch / tag / commit to merge." }
+          }
+        }
+      },
+      {
+        "name": "diversion_cherry_pick",
+        "displayName": "Diversion: Cherry-pick Commit",
+        "modelDescription": "Applies the changes of a single past commit on top of the current branch.",
+        "userDescription": "Cherry-pick a Diversion commit.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "dvCherryPick",
+        "tags": ["diversion", "scm"],
+        "inputSchema": {
+          "type": "object",
+          "required": ["commit"],
+          "properties": {
+            "repo": { "type": "string" },
+            "commit": { "type": "string", "description": "Commit ID to cherry-pick." }
+          }
+        }
+      },
+      {
+        "name": "diversion_revert_commit",
+        "displayName": "Diversion: Revert Commit",
+        "modelDescription": "Creates a new commit that inverts the changes of a past commit. Does not rewrite history.",
+        "userDescription": "Revert a Diversion commit.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "dvRevertCommit",
+        "tags": ["diversion", "scm"],
+        "inputSchema": {
+          "type": "object",
+          "required": ["commit"],
+          "properties": {
+            "repo": { "type": "string" },
+            "commit": { "type": "string" },
+            "conflictResolution": { "type": "string", "enum": ["manual", "keep-current", "accept-incoming"] }
+          }
+        }
+      },
+      {
+        "name": "diversion_revert_to_commit",
+        "displayName": "Diversion: Restore Workspace To Commit",
+        "modelDescription": "Sets the workspace contents to match a given commit. Does NOT rewrite history; creates a new commit reflecting the rolled-back state.",
+        "userDescription": "Restore the workspace to a past commit.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "dvRevertToCommit",
+        "tags": ["diversion", "scm"],
+        "inputSchema": {
+          "type": "object",
+          "required": ["commit"],
+          "properties": {
+            "repo": { "type": "string" },
+            "commit": { "type": "string" }
+          }
+        }
+      },
+      {
+        "name": "diversion_restore_path",
+        "displayName": "Diversion: Restore Path From Ref",
+        "modelDescription": "Overwrites a single file in the working tree with its contents from a given ref.",
+        "userDescription": "Restore a file from a Diversion ref.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "dvRestorePath",
+        "tags": ["diversion", "scm"],
+        "inputSchema": {
+          "type": "object",
+          "required": ["ref", "path"],
+          "properties": {
+            "repo": { "type": "string" },
+            "ref": { "type": "string", "description": "Ref to source the file from." },
+            "path": { "type": "string", "description": "Repo-relative path to restore." }
+          }
+        }
+      },
+      {
+        "name": "diversion_discard_path",
+        "displayName": "Diversion: Discard Path Changes",
+        "modelDescription": "Discards uncommitted changes to a single workspace-relative path.",
+        "userDescription": "Discard changes to a path.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "dvDiscardPath",
+        "tags": ["diversion", "scm"],
+        "icon": "$(discard)",
+        "inputSchema": {
+          "type": "object",
+          "required": ["path"],
+          "properties": {
+            "repo": { "type": "string" },
+            "path": { "type": "string" }
+          }
+        }
+      },
+      {
+        "name": "diversion_discard_all",
+        "displayName": "Diversion: Discard ALL Changes",
+        "modelDescription": "Discards every uncommitted change in the workspace. If includeNew is true, also removes newly-added (untracked) files.",
+        "userDescription": "Discard all working-tree changes.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "dvDiscardAll",
+        "tags": ["diversion", "scm"],
+        "icon": "$(discard)",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "repo": { "type": "string" },
+            "includeNew": { "type": "boolean" }
+          }
+        }
+      },
+      {
+        "name": "diversion_create_tag",
+        "displayName": "Diversion: Create Tag",
+        "modelDescription": "Creates a tag at a specific commit, or at the current commit if `commit` is omitted.",
+        "userDescription": "Create a tag.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "dvCreateTag",
+        "tags": ["diversion", "scm"],
+        "icon": "$(tag)",
+        "inputSchema": {
+          "type": "object",
+          "required": ["name"],
+          "properties": {
+            "repo": { "type": "string" },
+            "name": { "type": "string" },
+            "commit": { "type": "string", "description": "Commit to tag (defaults to current commit)." },
+            "description": { "type": "string" }
+          }
+        }
+      },
+      {
+        "name": "diversion_create_shelf",
+        "displayName": "Diversion: Create Shelf",
+        "modelDescription": "Shelves working-tree changes under a name. If `paths` is supplied only those are shelved; otherwise all changes. Set keepWorkingChanges to keep the working tree intact.",
+        "userDescription": "Create a Diversion shelf.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "dvCreateShelf",
+        "tags": ["diversion", "scm"],
+        "icon": "$(archive)",
+        "inputSchema": {
+          "type": "object",
+          "required": ["name"],
+          "properties": {
+            "repo": { "type": "string" },
+            "name": { "type": "string" },
+            "paths": { "type": "array", "items": { "type": "string" } },
+            "keepWorkingChanges": { "type": "boolean" }
+          }
+        }
+      },
+      {
+        "name": "diversion_apply_shelf",
+        "displayName": "Diversion: Apply Shelf",
+        "modelDescription": "Applies a shelved changeset on top of the working tree.",
+        "userDescription": "Apply a Diversion shelf.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "dvApplyShelf",
+        "tags": ["diversion", "scm"],
+        "inputSchema": {
+          "type": "object",
+          "required": ["shelf"],
+          "properties": {
+            "repo": { "type": "string" },
+            "shelf": { "type": "string" },
+            "keepShelfAfter": { "type": "boolean" }
+          }
+        }
+      },
+      {
+        "name": "diversion_delete_shelf",
+        "displayName": "Diversion: Delete Shelf",
+        "modelDescription": "Deletes a shelf permanently.",
+        "userDescription": "Delete a Diversion shelf.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "dvDeleteShelf",
+        "tags": ["diversion", "scm"],
+        "icon": "$(trash)",
+        "inputSchema": {
+          "type": "object",
+          "required": ["shelf"],
+          "properties": {
+            "repo": { "type": "string" },
+            "shelf": { "type": "string" }
+          }
+        }
+      },
+      {
+        "name": "diversion_rename_shelf",
+        "displayName": "Diversion: Rename Shelf",
+        "modelDescription": "Renames an existing shelf.",
+        "userDescription": "Rename a Diversion shelf.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "dvRenameShelf",
+        "tags": ["diversion", "scm"],
+        "inputSchema": {
+          "type": "object",
+          "required": ["shelf", "newName"],
+          "properties": {
+            "repo": { "type": "string" },
+            "shelf": { "type": "string" },
+            "newName": { "type": "string" }
+          }
+        }
+      },
+      {
+        "name": "diversion_lock_path",
+        "displayName": "Diversion: Lock Path",
+        "modelDescription": "Acquires a hard lock on a path so other users cannot modify it. Requires a Studio or Enterprise subscription on the repo.",
+        "userDescription": "Lock a file in a Diversion repo.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "dvLockPath",
+        "tags": ["diversion", "scm"],
+        "icon": "$(lock)",
+        "inputSchema": {
+          "type": "object",
+          "required": ["path"],
+          "properties": {
+            "repo": { "type": "string" },
+            "path": { "type": "string" }
+          }
+        }
+      },
+      {
+        "name": "diversion_unlock_path",
+        "displayName": "Diversion: Unlock Path",
+        "modelDescription": "Releases a hard lock previously acquired on a path.",
+        "userDescription": "Unlock a file in a Diversion repo.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "dvUnlockPath",
+        "tags": ["diversion", "scm"],
+        "icon": "$(unlock)",
+        "inputSchema": {
+          "type": "object",
+          "required": ["path"],
+          "properties": {
+            "repo": { "type": "string" },
+            "path": { "type": "string" }
+          }
+        }
+      },
+      {
+        "name": "diversion_pause_sync",
+        "displayName": "Diversion: Pause Sync",
+        "modelDescription": "Pauses the agent's background sync for the workspace (like working offline).",
+        "userDescription": "Pause Diversion background sync.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "dvPauseSync",
+        "tags": ["diversion", "scm"],
+        "inputSchema": { "type": "object", "properties": { "repo": { "type": "string" } } }
+      },
+      {
+        "name": "diversion_resume_sync",
+        "displayName": "Diversion: Resume Sync",
+        "modelDescription": "Resumes the agent's background sync for the workspace.",
+        "userDescription": "Resume Diversion background sync.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "dvResumeSync",
+        "tags": ["diversion", "scm"],
+        "inputSchema": { "type": "object", "properties": { "repo": { "type": "string" } } }
+      },
+      {
+        "name": "diversion_update_workspace",
+        "displayName": "Diversion: Update Workspace",
+        "modelDescription": "Force-pulls the workspace's base branch. Useful when auto-update is off or you want to update immediately.",
+        "userDescription": "Update Diversion workspace.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "dvUpdateWorkspace",
+        "tags": ["diversion", "scm"],
+        "icon": "$(sync)",
+        "inputSchema": { "type": "object", "properties": { "repo": { "type": "string" } } }
+      },
+      {
+        "name": "diversion_verify",
+        "displayName": "Diversion: Verify Integrity",
+        "modelDescription": "Runs dv's built-in integrity verification on the repo and returns the output.",
+        "userDescription": "Verify Diversion repository integrity.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "dvVerify",
+        "tags": ["diversion", "scm"],
+        "inputSchema": { "type": "object", "properties": { "repo": { "type": "string" } } }
       }
     ]
   },
@@ -660,6 +1354,7 @@
     "package": "vsce package --no-dependencies"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "ignore": "^5.3.2"
   },
   "devDependencies": {

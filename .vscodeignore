@@ -17,3 +17,4 @@ vitest.config.ts
 **/*.tsbuildinfo
 *.vsix
 !out/extension.js
+!out/mcp.js

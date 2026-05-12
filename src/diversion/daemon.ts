@@ -2,7 +2,6 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as http from 'node:http';
-import * as vscode from 'vscode';
 import type {
   DaemonHealth,
   DaemonWorkspace,
@@ -242,11 +241,4 @@ export class DaemonClient {
       req.end();
     });
   }
-}
-
-/** Build a DaemonClient honoring the diversion.daemonUrl setting. */
-export function daemonClientFromSettings(): DaemonClient {
-  const cfg = vscode.workspace.getConfiguration('diversion');
-  const url = cfg.get<string>('daemonUrl', '').trim();
-  return new DaemonClient(url ? { baseUrl: url } : {});
 }

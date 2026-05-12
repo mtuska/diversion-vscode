@@ -61,35 +61,156 @@ jobs:
       - name: Package .vsix
         run: npm run package
 
-      - name: Locate .vsix artifact
-        id: vsix
+      - name: Locate release artifacts
+        id: artifacts
         run: |
-          file=$(ls diversion-vscode-*.vsix | head -1)
-          if [ -z "$file" ]; then
+          vsix=$(ls diversion-vscode-*.vsix | head -1)
+          if [ -z "$vsix" ]; then
             echo "::error::No .vsix produced"
             exit 1
           fi
-          echo "file=$file" >> "$GITHUB_OUTPUT"
+          if [ ! -f out/mcp.js ]; then
+            echo "::error::out/mcp.js not produced — vscode:prepublish should have built it"
+            exit 1
+          fi
+          # Rename so the file's purpose is obvious on the GitHub Releases page —
+          # "mcp.js" out of context is meaningless. Keep the .js suffix because
+          # the file is Node-script bundle (shebang + cjs), not a native binary.
+          cp out/mcp.js diversion-mcp.js
+          chmod +x diversion-mcp.js
+          echo "vsix=$vsix" >> "$GITHUB_OUTPUT"
+          echo "mcp=diversion-mcp.js" >> "$GITHUB_OUTPUT"
 
       # Robust to "release already exists" — uploads (or re-uploads with
-      # --clobber) the artifact when the release is already there, otherwise
+      # --clobber) artifacts when the release is already there, otherwise
       # creates a fresh release with auto-generated notes.
       - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.resolve.outputs.tag }}
-          VSIX: ${{ steps.vsix.outputs.file }}
+          VSIX: ${{ steps.artifacts.outputs.vsix }}
+          MCP: ${{ steps.artifacts.outputs.mcp }}
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG already exists — uploading .vsix (overwriting if needed)."
-            gh release upload "$TAG" "$VSIX" --clobber
+            echo "Release $TAG already exists — uploading artifacts (overwriting if needed)."
+            gh release upload "$TAG" "$VSIX" "$MCP" --clobber
           else
             echo "Creating release $TAG with auto-generated notes."
             gh release create "$TAG" \
               --title "$TAG" \
               --generate-notes \
-              "$VSIX"
+              "$VSIX" "$MCP"
           fi
+
+      # Publish the standalone MCP server to npm under @mtuska/diversion-mcp,
+      # so users can run `npx @mtuska/diversion-mcp` without preinstalling
+      # anything. Idempotent on retry: skips silently if the version is
+      # already on the registry. No-op (with a warning) if NPM_TOKEN is
+      # unset, so contributors can run the workflow without breaking it.
+      #
+      # We publish from a temp directory that contains only the bundle, a
+      # minimal package.json, README, and LICENSE. The bundle is fully
+      # self-contained (esbuild inlined the MCP SDK + zod), so the
+      # published tarball is tiny and has no runtime dependencies.
+      - name: Publish @mtuska/diversion-mcp to npm
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          # GitHub Actions disallows referencing `secrets.*` in step-level
+          # `if:` expressions, so the no-token guard lives inside the
+          # script. A missing token degrades to a warning, never a fail —
+          # contributors who don't have npm publish access can still cut
+          # releases.
+          if [ -z "${NPM_TOKEN:-}" ]; then
+            echo "::warning::NPM_TOKEN secret is not set — skipping @mtuska/diversion-mcp publish."
+            exit 0
+          fi
+
+          if [ ! -f out/mcp.js ]; then
+            echo "::error::out/mcp.js missing — earlier build step should have produced it"
+            exit 1
+          fi
+
+          # The published version mirrors the tag, with the leading 'v'
+          # stripped. This keeps the npm package version aligned with the
+          # GitHub release, which keeps the vsix and the MCP bundle in
+          # lockstep — important because they share the same source code.
+          VERSION="${TAG#v}"
+          PKG_NAME="@mtuska/diversion-mcp"
+
+          # If the version is already published, skip rather than fail —
+          # makes manual workflow_dispatch reruns idempotent.
+          if npm view "$PKG_NAME@$VERSION" version >/dev/null 2>&1; then
+            echo "$PKG_NAME@$VERSION is already on npm — skipping publish."
+            exit 0
+          fi
+
+          stage=$(mktemp -d)
+          cp out/mcp.js "$stage/mcp.js"
+          chmod +x "$stage/mcp.js"
+          cp LICENSE "$stage/LICENSE"
+
+          # Slim README so the npm page makes sense on its own. Keep it
+          # short — the source of truth is the main repo's README.
+          cat > "$stage/README.md" <<'EOF'
+          # @mtuska/diversion-mcp
+
+          Standalone stdio Model Context Protocol server for
+          [Diversion](https://www.diversion.dev) (the `dv` CLI). Exposes 39
+          Diversion source-control tools — status, diff, log, file history,
+          conflict awareness, commit, branch, merge, shelves, locks, etc.
+          — to any MCP-aware AI client (Claude Code, Codex, Claude Desktop,
+          Cursor, Windsurf).
+
+          See the main project for documentation, source, and issue tracker:
+          <https://github.com/mtuska/diversion-vscode>.
+
+          ## Quick start
+
+          ```bash
+          # Claude Code
+          claude mcp add diversion -- npx -y @mtuska/diversion-mcp
+
+          # Codex (~/.codex/config.toml)
+          #   [mcp_servers.diversion]
+          #   command = "npx"
+          #   args = ["-y", "@mtuska/diversion-mcp"]
+          ```
+
+          Requires the `dv` CLI on `$PATH` and the local Diversion agent
+          running. Node 18+ on Linux / macOS / Windows.
+          EOF
+
+          cat > "$stage/package.json" <<EOF
+          {
+            "name": "$PKG_NAME",
+            "version": "$VERSION",
+            "description": "Standalone stdio MCP server for Diversion (dv). Exposes Diversion source-control operations to Claude Code, Codex, Claude Desktop, Cursor, and any other MCP-aware AI client.",
+            "bin": { "diversion-mcp": "./mcp.js" },
+            "files": ["mcp.js", "README.md", "LICENSE"],
+            "engines": { "node": ">=18" },
+            "license": "Unlicense",
+            "repository": {
+              "type": "git",
+              "url": "git+https://github.com/mtuska/diversion-vscode.git"
+            },
+            "homepage": "https://github.com/mtuska/diversion-vscode#readme",
+            "bugs": "https://github.com/mtuska/diversion-vscode/issues",
+            "keywords": ["mcp", "model-context-protocol", "diversion", "dv", "scm", "source-control", "version-control", "claude", "codex"]
+          }
+          EOF
+
+          # Write the auth token to a project-local .npmrc rather than
+          # using `npm config set` so it never lands in $HOME between jobs.
+          # The token-less default registry stays intact for `npm view` above.
+          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > "$stage/.npmrc"
+
+          echo "Publishing $PKG_NAME@$VERSION (scoped → public access)…"
+          cd "$stage"
+          npm publish --access public
 
       # Guard against accidental publisher/name renames in package.json — the
       # .vsix must match the expected marketplace listing (vars.VSCE_EXTENSION_ID,
@@ -122,5 +243,5 @@ jobs:
       - name: Publish to VS Marketplace
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
-          VSIX: ${{ steps.vsix.outputs.file }}
+          VSIX: ${{ steps.artifacts.outputs.vsix }}
         run: npx vsce publish --no-dependencies --packagePath "$VSIX" --allow-proposed-apis scmHistoryProvider scmActionButton

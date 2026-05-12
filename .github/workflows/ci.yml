@@ -51,3 +51,11 @@ jobs:
           path: '*.vsix'
           retention-days: 14
           if-no-files-found: error
+
+      - name: Upload MCP bundle as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: diversion-mcp
+          path: out/mcp.js
+          retention-days: 14
+          if-no-files-found: error

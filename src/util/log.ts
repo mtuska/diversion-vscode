@@ -1,12 +1,10 @@
 import * as vscode from 'vscode';
+import { LEVEL_RANK, type LogLevel, type LoggerLike } from './logCore.js';
 
-export type LogLevel = 'off' | 'error' | 'warn' | 'info' | 'debug';
+export type { LogLevel, LoggerLike } from './logCore.js';
+export { StderrLogger } from './logCore.js';
 
-const LEVEL_RANK: Record<LogLevel, number> = {
-  off: 0, error: 1, warn: 2, info: 3, debug: 4,
-};
-
-export class Logger {
+export class Logger implements LoggerLike {
   private channel: vscode.OutputChannel;
   private level: LogLevel;
 
