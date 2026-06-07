@@ -2,7 +2,7 @@
   "name": "diversion-vscode",
   "displayName": "Diversion",
   "description": "Source control integration for Diversion (https://www.diversion.dev) — register Diversion as a first-class SCM provider in VS Code.",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "publisher": "mtuska",
   "license": "Unlicense",
   "repository": {
@@ -310,6 +310,11 @@
           "type": "string",
           "default": "",
           "description": "Override the Diversion daemon URL (e.g. http://127.0.0.1:38825). Empty discovers via ~/.diversion/.port."
+        },
+        "diversion.coreApiUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Override the Diversion CoreAPI base URL used for status, branches, log, and shelves. Empty uses the production endpoint (https://api.diversion.dev/v0)."
         },
         "diversion.refresh.debounceMs": {
           "type": "number",

@@ -41,21 +41,29 @@ src/
                         Endpoints: /health, /workspaces, /workspace?abs_path,
                         /repo/{}/workspace/{}/sync (+/progress), /files/status.
     cli.ts              Spawn-`dv` wrapper. Concurrency-bounded via semaphore.
-    repo.ts             Per-repo facade. Holds identity, calls daemon + CLI,
-                        exposes high-level ops (commit, diff, log, branches…).
+    repo.ts             Per-repo facade. Holds identity; reads via CoreAPI,
+                        writes via CLI; exposes high-level ops (commit, diff,
+                        log, branches…).
+    coreApi.ts          CoreApiClient — typed cloud CoreAPI client. Token from
+                        daemon.coreToken() (cached in memory). Source of truth
+                        for status, branches, log, compare, shelves, repos.
     detect.ts           findDiversionRoot (upward walk), findNestedDiversionRoots
                         (downward, depth-bounded — the multi-repo case),
                         detectRepo (tries daemon first, FS fallback).
     settings.ts         Read user-configurable settings.
-    types.ts            Wire types — RepoIdentity, FileChange, AgentAPI shapes.
-    parsers/            One file per `dv` text format we parse. Each is unit-
-                        tested under test/unit/parsers/.
+    types.ts            Wire types — RepoIdentity, FileChange, domain types
+                        (CommitDetails, BranchInfo…), AgentAPI + CoreAPI shapes.
+    parsers/            Text parsers for the few `dv` outputs with no API:
+                        lock (locks), annotate (blame), tag (already JSON),
+                        unifiedDiff (display renderer). Unit-tested under
+                        test/unit/parsers/.
     conflicts.ts        Detection of `*.dv-conflict*` sidecar files.
     reverseApply.ts     Discard helpers.
   scm/
     provider.ts         DiversionScmProvider — implements vscode.SourceControl.
-                        doRefresh runs `dv status` + `dv diff --name-status`,
-                        coalesces concurrent refreshes via `inFlight`.
+                        doRefresh pulls changed paths from the CoreAPI
+                        (repo.getState), coalesces concurrent refreshes via
+                        `inFlight`.
     historyProvider.ts  Source Control Graph integration. Fires
                         notifyCurrentChanged + notifyRefsChanged on commit.
     changeDecorations.ts FileDecorationProvider for M/A/D/R + ancestor
@@ -215,7 +223,8 @@ command can be triggered from multiple menu locations.
 **Pre-commit checks**
 
 - `npm run typecheck` — must pass. Strict mode, no errors tolerated.
-- `npm test` — Vitest, parser-heavy unit tests. ~60 tests, all should pass.
+- `npm test` — Vitest unit tests (CoreAPI mappers + remaining parsers).
+  ~46 tests, all should pass.
 - No mandatory lint step today; if you add one, also wire it into CI.
 
 **Don't surprise the user**
@@ -243,14 +252,21 @@ command can be triggered from multiple menu locations.
    `contributes.menus` array with a `when` clause gating on
    `scmProvider == diversion`.
 
-**Add a new dv-CLI-backed operation to `Repo`**
+**Add a new read operation to `Repo`** (prefer the CoreAPI)
+
+1. Add the wire type(s) in `types.ts` (snake_case, mirroring the JSON).
+2. Method on `CoreApiClient` in `coreApi.ts` that calls `this.get(...)`
+   and maps to a domain type. Add a Vitest unit test in
+   `test/unit/coreApi.test.ts` with a stubbed daemon + mocked `fetch`.
+3. Thin method on `Repo` delegating to `this.core`.
+4. Only fall back to text-parsing the CLI when there is genuinely no
+   CoreAPI endpoint (today: locks, blame). Treat `dv`'s text format as
+   unstable; parsers are the single place that knows the layout.
+
+**Add a new dv-CLI-backed write operation to `Repo`**
 
 1. Method on `Repo` in `repo.ts` calling `runDvOrThrow([...args], {...})`.
-2. If the output needs parsing, add a parser under
-   `src/diversion/parsers/` and a Vitest unit test for it under
-   `test/unit/parsers/`. Test against fixtures, not live `dv`.
-3. Treat `dv`'s text format as unstable; the parsers are the single
-   place that knows the layout.
+   Writes stay on the CLI so the agent keeps sync state authoritative.
 
 **Add a new AgentAPI endpoint**
 

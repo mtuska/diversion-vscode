@@ -8,9 +8,9 @@
 
 Source-control integration for [Diversion](https://www.diversion.dev) — registers Diversion as a first-class SCM provider in VS Code, and ships a standalone stdio MCP server (`diversion-mcp`) so any MCP-aware AI client can drive your Diversion workspaces.
 
-> **Status: v0.5.x.** Available on the [VS Marketplace](https://marketplace.visualstudio.com/items?itemName=mtuska.diversion-vscode). Tested against `dv v0.9.x` on VS Code 1.95+ and on Linux / macOS / Windows. Coexists peacefully with the built-in Git provider; activates whenever the open folder lives inside (or is) a Diversion-managed workspace.
+> **Status: v0.6.x.** Available on the [VS Marketplace](https://marketplace.visualstudio.com/items?itemName=mtuska.diversion-vscode). Tested against `dv v1.0.x` on VS Code 1.95+ and on Linux / macOS / Windows. Coexists peacefully with the built-in Git provider; activates whenever the open folder lives inside (or is) a Diversion-managed workspace.
 
-This v0.5 release adds the **MCP server** as a first-class artifact alongside the VS Code extension. The two share the same parsers and the same dv-CLI runner — the extension wires them into the SCM panel; both surface the same Diversion operations to AI models through different protocols.
+This v0.6 release **cuts read operations over to the Diversion CoreAPI**. Status, changed files, branches, log/history, per-commit diffs, shelves, and the repo list are now sourced from structured cloud endpoints (`https://api.diversion.dev/v0`) instead of text-parsing the `dv` CLI — authenticated by a short-lived token minted by the local sync agent, so there's no extra OAuth to configure. Only the operations with no API equivalent (**file locks** and **line-level blame**) still parse CLI output, and write operations (commit, checkout, merge, …) still go through `dv`. The extension and the **MCP server** share this CoreAPI client and the same dv-CLI runner.
 
 ## What you get
 

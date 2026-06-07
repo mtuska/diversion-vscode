@@ -1,7 +1,15 @@
 import * as esbuild from 'esbuild';
+import { readFileSync } from 'node:fs';
 
 const watch = process.argv.includes('--watch');
 const production = process.argv.includes('--production');
+
+// Inject the package version at build time so the CoreAPI client can send it
+// as X-DV-App-Version. tsconfig's rootDir:src forbids importing package.json
+// directly, and a build-time define keeps both bundles in sync with no
+// runtime file read.
+const { version } = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
+const define = { __APP_VERSION__: JSON.stringify(version) };
 
 const extensionConfig = {
   entryPoints: ['src/extension.ts'],
@@ -11,6 +19,7 @@ const extensionConfig = {
   format: 'cjs',
   platform: 'node',
   target: 'node18',
+  define,
   sourcemap: !production,
   minify: production,
   logLevel: 'info',
@@ -31,6 +40,7 @@ const mcpConfig = {
   format: 'cjs',
   platform: 'node',
   target: 'node18',
+  define,
   sourcemap: !production,
   minify: production,
   banner: { js: '#!/usr/bin/env node' },

@@ -2,20 +2,22 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { runDv, runDvOrThrow, type CancellationLike } from './cli.js';
 import { listFilesRecursive } from '../util/walk.js';
+import { CoreApiClient } from './coreApi.js';
 import { parseStatus, type ParsedStatus } from './parsers/status.js';
 import { parseDiffNameStatus } from './parsers/diffNameStatus.js';
-import { parseBranchList, type BranchInfo } from './parsers/branch.js';
-import { parseLogOneline, parseLogFull, type CommitSummary, type CommitDetails } from './parsers/log.js';
 import { parseLockList, type LockInfo } from './parsers/lock.js';
-import { parseShelfList, type ShelfInfo } from './parsers/shelf.js';
 import { parseAnnotation, type Annotation } from './parsers/annotate.js';
 import { parseTagList, type TagInfo } from './parsers/tag.js';
-import { parseRepoList, type RepoListEntry } from './parsers/repoList.js';
 import { findSyncConflicts, type SyncConflict } from './conflicts.js';
 import type { DaemonClient } from './daemon.js';
 import type {
+  BranchInfo,
+  CommitDetails,
+  CommitSummary,
   FileChange,
   RepoIdentity,
+  RepoListEntry,
+  ShelfInfo,
   WorkspaceSyncProgress,
   WorkspaceSyncStatus,
 } from './types.js';
@@ -42,12 +44,25 @@ export const MAX_COMMIT_MESSAGE_LEN = 16384;
  * don't always have to shell out.
  */
 export class Repo {
+  private coreClient: CoreApiClient | undefined;
+
   constructor(
     private readonly daemon: DaemonClient,
     private readonly identity: RepoIdentity,
     private dvPath: string | undefined,
     private readonly logger: LoggerLike,
+    private readonly coreApiUrl?: string,
   ) {}
+
+  /** Lazily-constructed CoreAPI client (auth via the local agent token). */
+  private get core(): CoreApiClient {
+    if (!this.coreClient) {
+      this.coreClient = new CoreApiClient(this.daemon, this.logger, {
+        ...(this.coreApiUrl ? { baseUrl: this.coreApiUrl } : {}),
+      });
+    }
+    return this.coreClient;
+  }
 
   get root(): string { return this.identity.workspacePath; }
   get info(): RepoIdentity { return this.identity; }
@@ -129,10 +144,12 @@ export class Repo {
   }
 
   /**
-   * Pull working-tree state. Uses `dv diff --name-status` as the primary
-   * source for changed paths and `dv status` for header info (sync state,
-   * totals). Both are run in parallel, alongside a fast workspace scan for
-   * `*.dv-conflict*` sidecar files.
+   * Pull working-tree state. Uses local `dv status` + `dv diff --name-status`
+   * for the changelist — this reads the *local working tree*, so a just-edited
+   * file appears immediately. (The CoreAPI `get_status` endpoint reflects the
+   * cloud's view, which lags by a sync roundtrip, so it's unfit for the
+   * refresh hot path.) Runs alongside a fast scan for `*.dv-conflict*`
+   * sidecar files.
    */
   async getState(token?: CancellationLike): Promise<RepoState> {
     const [statusResult, diffResult, conflicts] = await Promise.all([
@@ -152,6 +169,7 @@ export class Repo {
     for (const c of status.changes) {
       if (c.kind === 'added' && !knownPaths.has(c.path)) changes.push(c);
     }
+
     // Strip `.dv-conflict*` sidecars from the change list — they aren't
     // actually tracked and they get their own dedicated group.
     changes = changes.filter((c) => !/\.dv-conflict(?:-\d+)?(?:\.[^./\\]+)?$/.test(c.path));
@@ -275,8 +293,7 @@ export class Repo {
   }
 
   async listBranches(): Promise<BranchInfo[]> {
-    const r = await runDvOrThrow(['branch'], { cwd: this.root, dvPath: this.dvPath });
-    return parseBranchList(r.stdout);
+    return this.core.listBranches(this.identity.repoId);
   }
 
   async createBranch(name: string, switchTo = true): Promise<void> {
@@ -303,24 +320,19 @@ export class Repo {
   }
 
   async logOneline(limit = 50): Promise<CommitSummary[]> {
-    const r = await runDvOrThrow(['log', '-n', String(limit), '--oneline'], {
-      cwd: this.root, dvPath: this.dvPath,
-    });
-    return parseLogOneline(r.stdout);
+    return this.core.logOneline(this.identity.repoId, limit);
   }
 
   async logFull(limit = 20): Promise<CommitDetails[]> {
-    const r = await runDvOrThrow(['log', '-n', String(limit), '--date', 'iso'], {
-      cwd: this.root, dvPath: this.dvPath,
-    });
-    return parseLogFull(r.stdout);
+    return this.core.listCommits(this.identity.repoId, { limit });
   }
 
   /**
-   * Extended log accepting an optional path-scope and date filters. dv's
-   * `log` command takes a path positional argument plus `--since` /
-   * `--until` (ISO date or relative — "1 week ago"). Used by both
-   * "history of file X" and "what's been committed lately" flows.
+   * Extended log accepting an optional path-scope and date filters. Path
+   * scope uses the CoreAPI object-history endpoint; date filters (`since` /
+   * `until`, ISO or relative like "1 week ago") are resolved client-side
+   * and applied to the fetched page. Used by both "history of file X" and
+   * "what's been committed lately" flows.
    */
   async logFiltered(opts: {
     path?: string;
@@ -328,14 +340,20 @@ export class Repo {
     since?: string;
     until?: string;
   } = {}): Promise<CommitDetails[]> {
-    const args: string[] = ['log'];
-    if (opts.path) args.push(opts.path);
-    args.push('-n', String(opts.limit ?? 20));
-    args.push('--date', 'iso');
-    if (opts.since) args.push('--since', opts.since);
-    if (opts.until) args.push('--until', opts.until);
-    const r = await runDvOrThrow(args, { cwd: this.root, dvPath: this.dvPath });
-    return parseLogFull(r.stdout);
+    const limit = opts.limit ?? 20;
+    const commits = opts.path
+      ? await this.core.fileHistory(this.identity.repoId, this.identity.commitId, opts.path, limit)
+      : await this.core.listCommits(this.identity.repoId, { limit });
+    const sinceMs = resolveDateBound(opts.since);
+    const untilMs = resolveDateBound(opts.until);
+    if (sinceMs === undefined && untilMs === undefined) return commits;
+    return commits.filter((c) => {
+      const t = Date.parse(c.date);
+      if (Number.isNaN(t)) return true; // don't drop commits we can't date
+      if (sinceMs !== undefined && t < sinceMs) return false;
+      if (untilMs !== undefined && t > untilMs) return false;
+      return true;
+    });
   }
 
   /**
@@ -371,9 +389,9 @@ export class Repo {
     return results.filter((r) => r.touched.length > 0);
   }
 
-  /** Per-file history — `dv log <path>` with optional limit. */
+  /** Per-file history via the CoreAPI object-history endpoint. */
   async fileHistory(relPath: string, limit = 20): Promise<CommitDetails[]> {
-    return this.logFiltered({ path: relPath, limit });
+    return this.core.fileHistory(this.identity.repoId, this.identity.commitId, relPath, limit);
   }
 
   /** List all tags in the repo. dv supports `--json` here, so we parse cleanly. */
@@ -397,13 +415,12 @@ export class Repo {
   }
 
   /**
-   * List repos visible to the authenticated dv user — locally-cloned and
-   * remote. Surfaces "what does this account have access to?" without
-   * touching the cloud CoreAPI ourselves.
+   * List repos visible to the authenticated user — locally-cloned and
+   * remote. Sourced from the CoreAPI; local clone paths are filled in from
+   * the agent's workspace registry.
    */
   async listCloudRepos(): Promise<RepoListEntry[]> {
-    const r = await runDvOrThrow(['repo'], { cwd: this.root, dvPath: this.dvPath });
-    return parseRepoList(r.stdout);
+    return this.core.listRepos();
   }
 
   /** Show the contents of a single shelf (raw dv text — format is human-formatted). */
@@ -451,13 +468,13 @@ export class Repo {
     return parseAnnotation(r.stdout);
   }
 
-  /** File changes introduced by a single commit. */
+  /**
+   * File changes introduced by a single commit — the diff against its first
+   * parent (or the empty tree for a root commit), via the CoreAPI compare
+   * endpoint.
+   */
   async fileChangesForCommit(commitId: string): Promise<FileChange[]> {
-    const r = await runDvOrThrow(
-      ['show', commitId, '--name-status', '--color', 'never'],
-      { cwd: this.root, dvPath: this.dvPath, timeoutMs: 60_000 },
-    );
-    return parseDiffNameStatus(r.stdout);
+    return this.core.commitChanges(this.identity.repoId, commitId);
   }
 
   /** Cherry-pick a commit's changes into the current workspace. */
@@ -505,18 +522,13 @@ export class Repo {
    * actions that need the message body.
    */
   async showCommit(commitId: string): Promise<CommitDetails | undefined> {
-    const r = await runDvOrThrow(['show', commitId, '--date', 'iso', '--color', 'never'], {
-      cwd: this.root, dvPath: this.dvPath, timeoutMs: 30_000,
-    });
-    const parsed = parseLogFull(r.stdout);
-    return parsed[0];
+    return this.core.getCommit(this.identity.repoId, commitId);
   }
 
   // ───── shelves ─────
 
   async listShelves(): Promise<ShelfInfo[]> {
-    const r = await runDvOrThrow(['shelf'], { cwd: this.root, dvPath: this.dvPath });
-    return parseShelfList(r.stdout);
+    return this.core.listShelves(this.identity.repoId);
   }
 
   /**
@@ -584,6 +596,38 @@ export class Repo {
 
 export async function deleteSidecar(sidecarPath: string): Promise<void> {
   await fs.unlink(sidecarPath);
+}
+
+const RELATIVE_RE = /^(\d+)\s+(second|minute|hour|day|week|month|year)s?\s+ago$/i;
+const UNIT_MS: Record<string, number> = {
+  second: 1_000,
+  minute: 60_000,
+  hour: 3_600_000,
+  day: 86_400_000,
+  week: 604_800_000,
+  month: 2_592_000_000, // 30d
+  year: 31_536_000_000, // 365d
+};
+
+/**
+ * Resolve a `since`/`until` value to an epoch-ms bound. Accepts ISO dates
+ * and relative expressions like "1 week ago" / "3 days ago" (the forms the
+ * MCP/AI tool descriptions advertise). Returns undefined for empty or
+ * unparseable input so the caller skips filtering rather than dropping all
+ * commits.
+ */
+function resolveDateBound(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const rel = RELATIVE_RE.exec(trimmed);
+  if (rel) {
+    const n = Number.parseInt(rel[1]!, 10);
+    const unit = UNIT_MS[rel[2]!.toLowerCase()];
+    if (unit) return Date.now() - n * unit;
+  }
+  const ms = Date.parse(trimmed);
+  return Number.isNaN(ms) ? undefined : ms;
 }
 
 function sortChanges(changes: FileChange[]): FileChange[] {

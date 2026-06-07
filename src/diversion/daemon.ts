@@ -3,6 +3,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as http from 'node:http';
 import type {
+  CoreToken,
   DaemonHealth,
   DaemonWorkspace,
   DaemonWorkspaces,
@@ -62,6 +63,22 @@ export class DaemonClient {
 
   async workspaces(): Promise<DaemonWorkspaces> {
     return this.getJson<DaemonWorkspaces>('/workspaces');
+  }
+
+  /**
+   * Mint a short-lived CoreAPI access token for the logged-in user. The
+   * agent exchanges its stored refresh token and returns a ~1h bearer
+   * (`coreapi/read`+`coreapi/write` scope). This lets us call the cloud
+   * CoreAPI directly without managing OAuth ourselves.
+   *
+   * NOTE: `/token/core` is not in the published AgentAPI spec — it's a
+   * shipping-but-undocumented endpoint. Callers must degrade gracefully
+   * (the agent may gate or remove it in a future release). The returned
+   * token is a write-capable credential: keep it in memory only, never
+   * log or persist it.
+   */
+  async coreToken(): Promise<CoreToken> {
+    return this.getJson<CoreToken>('/token/core');
   }
 
   /**

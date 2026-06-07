@@ -1,0 +1,215 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { CoreApiClient, CoreApiError } from '../../src/diversion/coreApi.js';
+
+const REPO = 'dv.repo.abc';
+const WS = 'dv.ws.xyz';
+
+const logger = { error() {}, warn() {}, info() {}, debug() {} };
+
+/** Minimal daemon stub: hands out a far-future token and one local clone. */
+function fakeDaemon(overrides: Partial<{ tokenCalls: { n: number } }> = {}) {
+  const tokenCalls = overrides.tokenCalls ?? { n: 0 };
+  return {
+    tokenCalls,
+    async coreToken() {
+      tokenCalls.n++;
+      return { AccessToken: 'tok', ExpiresAt: Math.floor(Date.now() / 1000) + 3600 };
+    },
+    async workspaces() {
+      return { [WS]: { RepoID: REPO, Path: '/tmp/ws' } };
+    },
+  } as never;
+}
+
+/** Stub global fetch with a URL-substring → JSON body table. */
+function stubFetch(routes: Array<[string, unknown]>) {
+  const fn = vi.fn(async (url: string) => {
+    const match = routes.find(([frag]) => url.includes(frag));
+    if (!match) return { ok: false, status: 404, async text() { return 'no route'; }, async json() { return {}; } };
+    return { ok: true, status: 200, async text() { return ''; }, async json() { return match[1]; } };
+  });
+  vi.stubGlobal('fetch', fn);
+  return fn;
+}
+
+/** A minimal ok Response with a JSON body. */
+function okJson(body: unknown) {
+  return { ok: true, status: 200, async json() { return body; }, async text() { return ''; } };
+}
+
+afterEach(() => vi.unstubAllGlobals());
+
+describe('CoreApiClient.listBranches', () => {
+  it('maps fields and drops deleted branches', async () => {
+    stubFetch([['/branches', {
+      object: 'Branch',
+      items: [
+        { branch_id: 'dv.branch.1', branch_name: 'main', commit_id: 'dv.commit.46', is_deleted: false },
+        { branch_id: 'dv.branch.9', branch_name: 'gone', commit_id: 'dv.commit.10', is_deleted: true },
+      ],
+    }]]);
+    const client = new CoreApiClient(fakeDaemon(), logger);
+    expect(await client.listBranches(REPO)).toEqual([
+      { name: 'main', id: 'dv.branch.1', commitId: 'dv.commit.46' },
+    ]);
+  });
+});
+
+describe('CoreApiClient.listCommits / logOneline', () => {
+  it('maps commit details and derives a one-line subject', async () => {
+    stubFetch([['/commits', {
+      object: 'Commit',
+      items: [{
+        commit_id: 'dv.commit.46',
+        commit_message: 'Update ue-mcp\n\nbody line',
+        created_ts: 1780075070,
+        branch_id: 'dv.branch.1',
+        author: { full_name: 'Montana Tuska', email: 'm@frs.llc', name: 'dv.u.x' },
+        parents: ['dv.commit.45'],
+        parent_branches: [{ id: 'dv.branch.1', name: 'main' }],
+      }],
+    }]]);
+    const client = new CoreApiClient(fakeDaemon(), logger);
+    const [c] = await client.listCommits(REPO, { limit: 1 });
+    expect(c.id).toBe('dv.commit.46');
+    expect(c.authorName).toBe('Montana Tuska');
+    expect(c.refs).toEqual(['main']);
+    expect(c.date).toBe(new Date(1780075070 * 1000).toISOString());
+    const [summary] = await client.logOneline(REPO, 1);
+    expect(summary).toEqual({ id: 'dv.commit.46', subject: 'Update ue-mcp' });
+  });
+
+  it('flags merge commits from multiple parents', async () => {
+    stubFetch([['/commits', {
+      items: [{
+        commit_id: 'dv.commit.38', commit_message: 'merge', created_ts: 1,
+        parents: ['dv.commit.37', 'dv.commit.36'],
+        parent_branches: [{ id: 'dv.branch.1', name: 'main' }, { id: 'dv.branch.5', name: 'feat' }],
+      }],
+    }]]);
+    const client = new CoreApiClient(fakeDaemon(), logger);
+    const [c] = await client.listCommits(REPO, { limit: 1 });
+    expect(c.merge).toEqual({ refName: 'feat', commitId: 'dv.commit.36' });
+  });
+});
+
+describe('CoreApiClient.commitChanges (compare)', () => {
+  it('derives change kinds from base/other item presence', async () => {
+    stubFetch([
+      ['/commits', { items: [{ commit_id: 'dv.commit.46', commit_message: 'x', created_ts: 1, parents: ['dv.commit.45'] }] }],
+      ['/compare', {
+        object: 'ComparisonItem',
+        items: [
+          { base_item: null, other_item: { path: 'added.txt', prev_path: null, hash: 'h', prev_hash: null, status: 2 } },
+          { base_item: { path: 'gone.txt', prev_path: null, hash: 'h', prev_hash: null, status: 4 }, other_item: null },
+          { base_item: { path: 'm.txt', prev_path: null, hash: 'p', prev_hash: null, status: 3 }, other_item: { path: 'm.txt', prev_path: 'm.txt', hash: 'h', prev_hash: 'p', status: 3 } },
+          { base_item: { path: 'old.txt', prev_path: null, hash: 'p', prev_hash: null, status: 3 }, other_item: { path: 'renamed.txt', prev_path: 'old.txt', hash: 'h', prev_hash: 'p', status: 3 } },
+        ],
+      }],
+    ]);
+    const client = new CoreApiClient(fakeDaemon(), logger);
+    expect(await client.commitChanges(REPO, 'dv.commit.46')).toEqual([
+      { kind: 'added', path: 'added.txt' },
+      { kind: 'deleted', path: 'gone.txt' },
+      { kind: 'modified', path: 'm.txt' },
+      { kind: 'renamed', path: 'renamed.txt', fromPath: 'old.txt' },
+    ]);
+  });
+});
+
+describe('CoreApiClient.listShelves', () => {
+  it('formats a description from timestamp + branch', async () => {
+    stubFetch([['/shelves', {
+      object: 'Shelf',
+      items: [{ id: 'dv.shelf.1', name: 'wip', created_timestamp: 1780075070, branch_id: 'dv.branch.1' }],
+    }]]);
+    const client = new CoreApiClient(fakeDaemon(), logger);
+    const [s] = await client.listShelves(REPO);
+    expect(s.id).toBe('dv.shelf.1');
+    expect(s.name).toBe('wip');
+    expect(s.description).toContain('dv.branch.1');
+  });
+});
+
+describe('CoreApiClient.listRepos', () => {
+  it('marks repos cloned locally using the agent registry', async () => {
+    stubFetch([['/repos', {
+      object: 'Repo',
+      items: [
+        { repo_id: REPO, repo_name: 'Prototypes' },
+        { repo_id: 'dv.repo.other', repo_name: 'Remote' },
+      ],
+    }]]);
+    const client = new CoreApiClient(fakeDaemon(), logger);
+    expect(await client.listRepos()).toEqual([
+      { name: 'Prototypes', id: REPO, cloned: true, localPath: '/tmp/ws' },
+      { name: 'Remote', id: 'dv.repo.other', cloned: false },
+    ]);
+  });
+});
+
+describe('CoreApiClient pagination', () => {
+  it('pages branches with limit/skip until a short page', async () => {
+    const page1 = Array.from({ length: 100 }, (_, i) => ({
+      branch_id: `dv.branch.${i}`, branch_name: `b${i}`, commit_id: 'c', is_deleted: false,
+    }));
+    const page2 = [{ branch_id: 'dv.branch.last', branch_name: 'last', commit_id: 'c', is_deleted: false }];
+    const fn = vi.fn()
+      .mockResolvedValueOnce(okJson({ items: page1 }))
+      .mockResolvedValueOnce(okJson({ items: page2 }));
+    vi.stubGlobal('fetch', fn);
+    const branches = await new CoreApiClient(fakeDaemon(), logger).listBranches(REPO);
+    expect(branches).toHaveLength(101);
+    expect(fn).toHaveBeenCalledTimes(2);
+    expect(String(fn.mock.calls[0]![0])).toContain('skip=0');
+    expect(String(fn.mock.calls[1]![0])).toContain('skip=100');
+  });
+});
+
+describe('CoreApiClient retry policy', () => {
+  it('retries once on a transient network error, then succeeds', async () => {
+    const fn = vi.fn()
+      .mockRejectedValueOnce(new Error('ECONNRESET'))
+      .mockResolvedValueOnce(okJson({ items: [] }));
+    vi.stubGlobal('fetch', fn);
+    await new CoreApiClient(fakeDaemon(), logger).listBranches(REPO);
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
+  it('does NOT retry an HTTP error response', async () => {
+    const fn = vi.fn().mockResolvedValue({ ok: false, status: 500, async text() { return 'boom'; }, async json() { return {}; } });
+    vi.stubGlobal('fetch', fn);
+    await expect(new CoreApiClient(fakeDaemon(), logger).listBranches(REPO)).rejects.toBeInstanceOf(CoreApiError);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT retry a timeout (AbortError)', async () => {
+    const fn = vi.fn().mockRejectedValue(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+    vi.stubGlobal('fetch', fn);
+    await expect(new CoreApiClient(fakeDaemon(), logger).listBranches(REPO)).rejects.toBeInstanceOf(CoreApiError);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('CoreApiClient request headers', () => {
+  it('sends app-name, app-version, and a correlation id', async () => {
+    const fn = vi.fn().mockResolvedValue(okJson({ items: [] }));
+    vi.stubGlobal('fetch', fn);
+    await new CoreApiClient(fakeDaemon(), logger).listBranches(REPO);
+    const headers = (fn.mock.calls[0]![1] as { headers: Record<string, string> }).headers;
+    expect(headers['X-DV-App-Name']).toBe('@mtuska/vscode-diversion');
+    expect(headers['X-DV-App-Version']).toBeTruthy();
+    expect(headers['X-Sentry-Correlation-ID']).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-/);
+  });
+});
+
+describe('CoreApiClient token caching', () => {
+  it('mints the bearer once and reuses it across calls', async () => {
+    stubFetch([['/branches', { items: [] }]]);
+    const daemon = fakeDaemon();
+    const client = new CoreApiClient(daemon, logger);
+    await client.listBranches(REPO);
+    await client.listBranches(REPO);
+    expect((daemon as unknown as { tokenCalls: { n: number } }).tokenCalls.n).toBe(1);
+  });
+});

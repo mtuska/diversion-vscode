@@ -7,6 +7,8 @@ test/**
 scripts/**
 node_modules/**
 docs/**
+unreal_plugin/**
+AGENTS.md
 .gitignore
 .eslintrc*
 tsconfig.json

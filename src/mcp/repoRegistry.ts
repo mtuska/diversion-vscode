@@ -10,6 +10,8 @@ export interface RepoRegistryOptions {
   dvPath?: string;
   /** Override the daemon base URL. Empty / undefined uses port-file discovery. */
   daemonUrl?: string;
+  /** Override the CoreAPI base URL. Empty / undefined uses the production endpoint. */
+  coreApiUrl?: string;
 }
 
 /**
@@ -29,6 +31,7 @@ export interface RepoRegistryOptions {
 export class RepoRegistry {
   private readonly daemon: DaemonClient;
   private readonly dvPath: string | undefined;
+  private readonly coreApiUrl: string | undefined;
   private readonly repos = new Map<string, Repo>();
 
   constructor(
@@ -36,6 +39,7 @@ export class RepoRegistry {
     opts: RepoRegistryOptions,
   ) {
     this.dvPath = opts.dvPath?.trim() || undefined;
+    this.coreApiUrl = opts.coreApiUrl?.trim() || undefined;
     this.daemon = new DaemonClient(opts.daemonUrl?.trim() ? { baseUrl: opts.daemonUrl.trim() } : {});
   }
 
@@ -88,7 +92,7 @@ export class RepoRegistry {
 
     const identity = await detectRepo(this.daemon, repoRoot);
     if (!identity) return undefined;
-    const repo = new Repo(this.daemon, identity, this.dvPath, this.logger);
+    const repo = new Repo(this.daemon, identity, this.dvPath, this.logger, this.coreApiUrl);
     this.repos.set(repoRoot, repo);
     return repo;
   }

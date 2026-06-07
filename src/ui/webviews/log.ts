@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import type { CommitDetails } from '../../diversion/parsers/log.js';
+import type { CommitDetails } from '../../diversion/types.js';
 
 export function showLogWebview(repoName: string, commits: CommitDetails[]): void {
   const panel = vscode.window.createWebviewPanel(

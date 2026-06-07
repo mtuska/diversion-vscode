@@ -11,23 +11,16 @@ on:
 permissions:
   contents: read
 
-# Opt into Node.js 24 inside the JavaScript-based actions (checkout,
-# setup-node, upload-artifact). The runner will force this in June 2026
-# anyway; setting it now removes the deprecation warning and surfaces any
-# Node-24-specific incompatibilities early.
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
-
 jobs:
   test:
     name: Typecheck + Test + Package
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: 'npm'
@@ -45,7 +38,7 @@ jobs:
         run: npm run package
 
       - name: Upload .vsix as workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: diversion-vscode-vsix
           path: '*.vsix'
@@ -53,7 +46,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload MCP bundle as workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: diversion-mcp
           path: out/mcp.js

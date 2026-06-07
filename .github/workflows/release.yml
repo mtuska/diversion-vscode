@@ -16,14 +16,8 @@ on:
         type: string
 
 permissions:
-  contents: write
-
-# Opt into Node.js 24 inside the JavaScript-based actions (checkout,
-# setup-node, upload-artifact). The runner will force this in June 2026
-# anyway; setting it now removes the deprecation warning and surfaces any
-# Node-24-specific incompatibilities early.
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+  contents: write   # create the GitHub release + upload assets
+  id-token: write   # OIDC credential for npm trusted publishing
 
 jobs:
   release:
@@ -40,12 +34,12 @@ jobs:
             echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ steps.resolve.outputs.tag }}
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: 'npm'
@@ -102,11 +96,22 @@ jobs:
               "$VSIX" "$MCP"
           fi
 
+      # Trusted publishing needs npm >= 11.5.1; Node 22 ships npm 10.x, so
+      # upgrade the npm used for the publish step (build/test above already
+      # ran under the pinned Node's npm via `npm ci`).
+      - name: Upgrade npm for trusted publishing
+        run: npm install -g npm@latest
+
       # Publish the standalone MCP server to npm under @mtuska/diversion-mcp,
       # so users can run `npx @mtuska/diversion-mcp` without preinstalling
       # anything. Idempotent on retry: skips silently if the version is
-      # already on the registry. No-op (with a warning) if NPM_TOKEN is
-      # unset, so contributors can run the workflow without breaking it.
+      # already on the registry.
+      #
+      # Auth is via npm trusted publishing (OIDC) — no NPM_TOKEN. npm mints a
+      # short-lived credential from this workflow's GitHub identity, which the
+      # trusted publisher configured on npmjs.com (repo mtuska/diversion-vscode,
+      # workflow release.yml) authorizes. Provenance is generated automatically
+      # (public repo), giving the published package a verified badge.
       #
       # We publish from a temp directory that contains only the bundle, a
       # minimal package.json, README, and LICENSE. The bundle is fully
@@ -114,18 +119,16 @@ jobs:
       # published tarball is tiny and has no runtime dependencies.
       - name: Publish @mtuska/diversion-mcp to npm
         env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           TAG: ${{ steps.resolve.outputs.tag }}
         run: |
           set -euo pipefail
 
-          # GitHub Actions disallows referencing `secrets.*` in step-level
-          # `if:` expressions, so the no-token guard lives inside the
-          # script. A missing token degrades to a warning, never a fail —
-          # contributors who don't have npm publish access can still cut
-          # releases.
-          if [ -z "${NPM_TOKEN:-}" ]; then
-            echo "::warning::NPM_TOKEN secret is not set — skipping @mtuska/diversion-mcp publish."
+          # OIDC trusted publishing only authenticates runs from the upstream
+          # repo; a fork can't get the credential. Releases are tag/dispatch
+          # triggered here, but guard anyway so an off-origin run skips
+          # cleanly instead of failing the publish.
+          if [ "${{ github.repository }}" != "mtuska/diversion-vscode" ]; then
+            echo "::warning::Not the upstream repo — skipping @mtuska/diversion-mcp publish."
             exit 0
           fi
 
@@ -203,12 +206,11 @@ jobs:
           }
           EOF
 
-          # Write the auth token to a project-local .npmrc rather than
-          # using `npm config set` so it never lands in $HOME between jobs.
-          # The token-less default registry stays intact for `npm view` above.
-          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > "$stage/.npmrc"
-
-          echo "Publishing $PKG_NAME@$VERSION (scoped → public access)…"
+          # No .npmrc / token: npm performs the OIDC trusted-publishing
+          # handshake at publish time. --access public is required for a
+          # first-time scoped publish and harmless thereafter. Provenance is
+          # automatic; do not pass --provenance.
+          echo "Publishing $PKG_NAME@$VERSION (scoped → public access, OIDC)…"
           cd "$stage"
           npm publish --access public
 

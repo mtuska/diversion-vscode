@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import type { Repo } from '../diversion/repo.js';
-import type { ShelfInfo } from '../diversion/parsers/shelf.js';
+import type { ShelfInfo } from '../diversion/types.js';
 import type { Logger } from '../util/log.js';
 
 /**

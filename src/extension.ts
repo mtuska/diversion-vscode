@@ -376,10 +376,12 @@ function scheduleDaemonReconnect(log: Logger): void {
 }
 
 /**
- * Warn (once) if the running `dv` is on a different major version than what
- * we tested against. v0.1 was developed against dv v0.9.x; we surface a
- * notification when major (or minor for 0.x) shifts, but don't refuse to
- * activate — the parsers are tolerant and this is a soft compatibility check.
+ * Warn (once) if the running `dv` is on a different *major* version than what
+ * we tested against. We test against dv v1.0.x (specifically v1.0.40); dv
+ * follows semver post-1.0, so the whole 1.x line is treated as compatible and
+ * only a different major triggers the notice. We never refuse to activate —
+ * this is a soft compatibility check, and most reads now go through the
+ * version-stable CoreAPI rather than CLI text parsing.
  */
 function warnIfIncompatibleVersion(log: Logger, version: string): void {
   // Strip leading 'v' and parse first three numbers.
@@ -388,20 +390,16 @@ function warnIfIncompatibleVersion(log: Logger, version: string): void {
     log.warn(`Could not parse dv version "${version}" — proceeding without compat check.`);
     return;
   }
-  const [, majorRaw, minorRaw] = m;
-  const major = Number.parseInt(majorRaw!, 10);
-  const minor = Number.parseInt(minorRaw!, 10);
+  const major = Number.parseInt(m[1]!, 10);
 
-  // Tested band: dv 0.9.x. While dv is pre-1.0, the minor version is the
-  // breaking-change axis; promote 1.x to a warn when it lands.
-  const supportedMajor = 0;
-  const supportedMinor = 9;
-  if (major === supportedMajor && minor === supportedMinor) return;
+  // Tested band: dv 1.0.x. Post-1.0 the major version is the breaking-change
+  // axis, so any 1.x minor/patch is considered fine.
+  const testedMajor = 1;
+  const testedMinor = 0;
+  if (major === testedMajor) return;
 
-  const direction = major > supportedMajor || (major === supportedMajor && minor > supportedMinor)
-    ? 'newer'
-    : 'older';
-  const msg = `Diversion: this extension was tested against dv ${supportedMajor}.${supportedMinor}.x — you have ${version} (${direction}). Output parsing may be off; report any glitches.`;
+  const direction = major > testedMajor ? 'newer' : 'older';
+  const msg = `Diversion: this extension was tested against dv ${testedMajor}.${testedMinor}.x — you have ${version} (${direction}). Some operations may be off; report any glitches.`;
   log.warn(msg);
   void vscode.window.showWarningMessage(msg);
 }
@@ -480,7 +478,7 @@ async function scanWorkspaceFolders(): Promise<void> {
   for (const [root, { id, folders: openFolders }] of foldersByRoot) {
     let provider = providers.get(root);
     if (!provider) {
-      const repo = new Repo(daemon, id, settings.dvPath, log);
+      const repo = new Repo(daemon, id, settings.dvPath, log, settings.coreApiUrl);
       provider = new DiversionScmProvider(
         repo, log, activationContext!.workspaceState, quickDiff, changeDecorations,
       );

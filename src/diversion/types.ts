@@ -100,3 +100,161 @@ export interface FileSyncStatus {
   IsSynced: boolean;
   StatusDescription?: string;
 }
+
+// ─── Domain types ─────────────────────────────────────────────────────
+// These describe Diversion concepts (commits, branches, shelves, repos,
+// working-tree status) independent of how we obtain them. Previously they
+// lived next to the CLI text parsers; since v0.6 they're sourced from the
+// CoreAPI, so they belong with the other domain types.
+
+export interface CommitSummary {
+  id: string;
+  subject: string;
+}
+
+export interface CommitDetails {
+  id: string;
+  /** Branch labels associated with the commit (e.g. its parent branches). */
+  refs: string[];
+  /** Set for merge commits: the second+ parent. */
+  merge?: { refName: string; commitId: string };
+  authorName: string;
+  authorEmail: string;
+  /** ISO-8601 UTC timestamp. */
+  date: string;
+  /** Full commit message. */
+  message: string;
+}
+
+export interface BranchInfo {
+  name: string;
+  id: string;
+  /** Tip commit ID for this branch. */
+  commitId: string;
+}
+
+export interface ShelfInfo {
+  /** Display name. */
+  name: string;
+  /** Stable ID, e.g. `dv.shelf.<uuid>`. */
+  id?: string;
+  /** Creation date / source branch, formatted for display. */
+  description?: string;
+  /** Raw label preserved for fallback display. */
+  raw: string;
+}
+
+export interface RepoListEntry {
+  name: string;
+  /** Stable repo ID, e.g. `dv.repo.<uuid>`. */
+  id: string;
+  /** Local clone path if the repo is cloned on this machine. */
+  localPath?: string;
+  /** True if the repo is cloned to this machine. */
+  cloned: boolean;
+}
+
+// ─── CoreAPI wire types ───────────────────────────────────────────────
+// Snake_case fields mirror the CoreAPI JSON (https://api.diversion.dev/v0)
+// exactly so responses deserialize without a remap layer.
+
+export interface CoreToken {
+  AccessToken: string;
+  /** Expiry as a Unix timestamp in seconds. */
+  ExpiresAt: number;
+}
+
+export interface CoreAuthor {
+  id?: string;
+  name?: string;
+  full_name?: string;
+  email?: string;
+  image?: string;
+}
+
+/** One changed path inside a `get_status` / `compare` response. */
+export interface CoreFileItem {
+  path: string;
+  prev_path: string | null;
+  hash: string | null;
+  prev_hash: string | null;
+  /** 2=new, 3=modified, 4=deleted. */
+  status: number;
+  mode?: number;
+  mtime?: string;
+  blob?: unknown;
+}
+
+export interface CoreComparisonItem {
+  base_item: CoreFileItem | null;
+  other_item: CoreFileItem | null;
+}
+
+export interface CoreComparisonResponse {
+  object?: string;
+  items: CoreComparisonItem[];
+  cascaded_changes_count?: number;
+  has_restricted_files?: boolean;
+}
+
+export interface CoreCommit {
+  commit_id: string;
+  commit_message: string;
+  created_ts: number;
+  branch_id?: string;
+  author?: CoreAuthor;
+  parents?: string[];
+  parent_branches?: Array<{ id: string; name: string }>;
+}
+
+export interface CoreBranch {
+  branch_id: string;
+  branch_name: string;
+  commit_id: string;
+  author?: CoreAuthor;
+  branch_description?: string | null;
+  is_deleted?: boolean;
+  is_protected?: boolean;
+}
+
+export interface CoreShelf {
+  id: string;
+  name: string;
+  created_timestamp: number;
+  branch_id?: string;
+}
+
+export interface CoreRepo {
+  repo_id: string;
+  repo_name: string;
+  description?: string;
+  size_bytes?: number;
+  access_mode?: string;
+  organization_id?: string;
+}
+
+/** Generic `{ object, items[] }` list envelope used by most list endpoints. */
+export interface CoreListEnvelope<T> {
+  object?: string;
+  items?: T[];
+}
+
+/** A single file's state in another user's workspace/branch (other_statuses). */
+export interface CoreOtherFileStatus {
+  workspace_id: string;
+  commit_id?: string;
+  branch_id?: string;
+  branch_name?: string;
+  status?: number;
+  mtime?: number;
+  author?: CoreAuthor;
+}
+
+export interface CoreOtherStatusEntry {
+  path: string;
+  file_statuses: CoreOtherFileStatus[];
+}
+
+export interface CoreOtherStatusesResponse {
+  statuses: CoreOtherStatusEntry[];
+}
