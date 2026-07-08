@@ -56,6 +56,37 @@ export class CoreApiError extends Error {
  * branches, log, compare, shelves, repos). The token is a write-capable
  * credential — it is never logged or persisted.
  */
+/**
+ * Validate the configured CoreAPI base URL before we ever attach a
+ * write-capable bearer token to a request. A hijacked `diversion.coreApiUrl`
+ * (or `DIVERSION_CORE_API_URL`) pointing at an attacker host would otherwise
+ * exfiltrate the token on the first call. We fail *safe*: on a cleartext
+ * remote URL or an unparseable value we log and fall back to production
+ * rather than honoring the dangerous override. Plain `http://` is permitted
+ * only for loopback (local test daemons). The effective URL is logged so an
+ * unexpected override is visible in the output channel.
+ */
+export function sanitizeBaseUrl(configured: string | undefined, logger: LoggerLike): string {
+  const raw = (configured?.trim() || DEFAULT_BASE_URL).replace(/\/+$/, '');
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    logger.warn(`CoreAPI: ignoring unparseable coreApiUrl "${raw}", using ${DEFAULT_BASE_URL}`);
+    return DEFAULT_BASE_URL;
+  }
+  const isLoopback = url.hostname === '127.0.0.1' || url.hostname === '::1' || url.hostname === 'localhost';
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && isLoopback)) {
+    logger.warn(
+      `CoreAPI: refusing cleartext/non-https endpoint "${raw}" for a bearer token; ` +
+      `using ${DEFAULT_BASE_URL}`,
+    );
+    return DEFAULT_BASE_URL;
+  }
+  if (raw !== DEFAULT_BASE_URL) logger.info(`CoreAPI base URL overridden: ${raw}`);
+  return raw;
+}
+
 export class CoreApiClient {
   private readonly baseUrl: string;
   private readonly timeoutMs: number;
@@ -66,7 +97,7 @@ export class CoreApiClient {
     private readonly logger: LoggerLike,
     opts: CoreApiClientOptions = {},
   ) {
-    this.baseUrl = (opts.baseUrl?.trim() || DEFAULT_BASE_URL).replace(/\/+$/, '');
+    this.baseUrl = sanitizeBaseUrl(opts.baseUrl, logger);
     this.timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
 

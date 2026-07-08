@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { CoreApiClient, CoreApiError } from '../../src/diversion/coreApi.js';
+import { CoreApiClient, CoreApiError, sanitizeBaseUrl } from '../../src/diversion/coreApi.js';
 
 const REPO = 'dv.repo.abc';
 const WS = 'dv.ws.xyz';
@@ -38,6 +38,39 @@ function okJson(body: unknown) {
 }
 
 afterEach(() => vi.unstubAllGlobals());
+
+describe('sanitizeBaseUrl', () => {
+  const PROD = 'https://api.diversion.dev/v0';
+
+  it('uses production when unset and strips trailing slashes', () => {
+    expect(sanitizeBaseUrl(undefined, logger)).toBe(PROD);
+    expect(sanitizeBaseUrl('https://api.diversion.dev/v0//', logger)).toBe(PROD);
+  });
+
+  it('allows an https override (e.g. an internal mirror)', () => {
+    expect(sanitizeBaseUrl('https://mirror.internal/v0', logger)).toBe('https://mirror.internal/v0');
+  });
+
+  it('allows http only for loopback (local test daemons)', () => {
+    expect(sanitizeBaseUrl('http://127.0.0.1:8080/v0', logger)).toBe('http://127.0.0.1:8080/v0');
+    expect(sanitizeBaseUrl('http://localhost:8080/v0', logger)).toBe('http://localhost:8080/v0');
+  });
+
+  it('refuses a cleartext remote endpoint and falls back to production', () => {
+    const warn = vi.fn();
+    expect(sanitizeBaseUrl('http://evil.example/v0', { ...logger, warn })).toBe(PROD);
+    expect(warn).toHaveBeenCalled();
+  });
+
+  it('refuses a non-http(s) scheme and falls back to production', () => {
+    expect(sanitizeBaseUrl('file:///etc/passwd', logger)).toBe(PROD);
+    expect(sanitizeBaseUrl('ftp://evil.example/v0', logger)).toBe(PROD);
+  });
+
+  it('falls back to production on an unparseable value', () => {
+    expect(sanitizeBaseUrl('not a url', logger)).toBe(PROD);
+  });
+});
 
 describe('CoreApiClient.listBranches', () => {
   it('maps fields and drops deleted branches', async () => {
