@@ -78,7 +78,7 @@ export class StatusBar implements vscode.Disposable {
       'Click to switch branch',
     ].join('\n');
     this.item.show();
-    this.logger.info(`[statusBar] showing "${text}"`);
+    this.logger.debug(`[statusBar] showing "${text}"`);
   }
 
   private startProgressPolling(repo: Repo): void {

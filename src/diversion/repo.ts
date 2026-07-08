@@ -107,13 +107,24 @@ export class Repo {
    * agent is unreachable so callers can fall back gracefully.
    */
   async syncStatus(): Promise<WorkspaceSyncStatus | undefined> {
+    // Cached briefly: the status bar calls this on every active-editor change,
+    // which would otherwise be one daemon round-trip per tab switch.
+    if (this.syncStatusCache !== undefined && Date.now() - this.syncStatusAt < 2_000) {
+      return this.syncStatusCache;
+    }
     try {
-      return await this.daemon.syncStatus(this.identity.repoId, this.identity.workspaceId);
+      const s = await this.daemon.syncStatus(this.identity.repoId, this.identity.workspaceId);
+      this.syncStatusCache = s;
+      this.syncStatusAt = Date.now();
+      return s;
     } catch (err) {
       this.logger.debug(`syncStatus failed: ${(err as Error).message}`);
       return undefined;
     }
   }
+
+  private syncStatusCache: WorkspaceSyncStatus | undefined;
+  private syncStatusAt = 0;
 
   /**
    * AgentAPI live sync activity — bytes transferred per direction,
@@ -478,9 +489,9 @@ export class Repo {
   }
 
   /** Per-line attribution for a workspace-relative path. */
-  async annotate(relPath: string): Promise<Annotation[]> {
+  async annotate(relPath: string, token?: CancellationLike): Promise<Annotation[]> {
     const r = await runDvOrThrow(['annotate', safeRepoPath(this.root, relPath)], {
-      cwd: this.root, dvPath: this.dvPath, timeoutMs: 60_000,
+      cwd: this.root, dvPath: this.dvPath, timeoutMs: 60_000, token,
     });
     return parseAnnotation(r.stdout);
   }

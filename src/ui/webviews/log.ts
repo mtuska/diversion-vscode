@@ -29,7 +29,9 @@ function renderHtml(repoName: string, commits: CommitDetails[]): string {
   `).join('\n');
 
   return `<!doctype html>
-<html><head><meta charset="utf-8"><style>
+<html><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline';">
+<style>
   body { font-family: var(--vscode-font-family); padding: 1rem; color: var(--vscode-foreground); background: var(--vscode-editor-background); }
   h1 { font-size: 1.1rem; margin: 0 0 1rem; }
   ul { list-style: none; padding: 0; margin: 0; }
@@ -53,5 +55,6 @@ function escape(s: string): string {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
