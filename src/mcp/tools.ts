@@ -6,8 +6,20 @@ import type { RepoRegistry } from './repoRegistry.js';
 
 type TextResult = CallToolResult;
 
+/**
+ * Upper bound on characters returned from any single tool. An unbounded diff /
+ * status / annotate of a large repo would otherwise blow the model's context
+ * window (and buffer megabytes into the client). ~100k chars ≈ 25k tokens.
+ */
+const MAX_TOOL_TEXT = 100_000;
+
+function truncateForModel(s: string): string {
+  if (s.length <= MAX_TOOL_TEXT) return s;
+  return `${s.slice(0, MAX_TOOL_TEXT)}\n\n…[truncated: ${s.length - MAX_TOOL_TEXT} of ${s.length} characters omitted — narrow the request (fewer paths, a smaller ref range, or a limit)]`;
+}
+
 const text = (s: string): TextResult => ({
-  content: [{ type: 'text', text: s }],
+  content: [{ type: 'text', text: truncateForModel(s) }],
 });
 
 const errText = (s: string): TextResult => ({

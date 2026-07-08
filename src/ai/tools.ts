@@ -74,8 +74,18 @@ function pickRepo(getRepos: RepoSource, hint?: string): Repo {
   throw new Error(`No repo matched "${hint}". Available: ${names}.`);
 }
 
+/**
+ * Cap on characters returned from any single tool. An unbounded diff / status
+ * / annotate of a large repo would otherwise blow the model's context window.
+ * ~100k chars ≈ 25k tokens.
+ */
+const MAX_TOOL_TEXT = 100_000;
+
 function textResult(text: string): vscode.LanguageModelToolResult {
-  return new vscode.LanguageModelToolResult([new vscode.LanguageModelTextPart(text)]);
+  const capped = text.length > MAX_TOOL_TEXT
+    ? `${text.slice(0, MAX_TOOL_TEXT)}\n\n…[truncated: ${text.length - MAX_TOOL_TEXT} of ${text.length} characters omitted — narrow the request (fewer paths, a smaller ref range, or a limit)]`
+    : text;
+  return new vscode.LanguageModelToolResult([new vscode.LanguageModelTextPart(capped)]);
 }
 
 function nonEmpty(name: string, value: string | undefined): string {

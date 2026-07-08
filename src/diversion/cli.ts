@@ -58,7 +58,17 @@ export interface DvRunOptions {
   dvPath?: string;
   /** Extra environment variables. */
   env?: NodeJS.ProcessEnv;
+  /**
+   * Cap on combined stdout+stderr bytes buffered before the process is killed
+   * and the call rejects. Guards the extension host against OOM on a
+   * pathologically large diff/status. Default {@link DEFAULT_MAX_BYTES};
+   * pass 0 to disable.
+   */
+  maxBytes?: number;
 }
+
+/** Default cap on buffered dv output (see {@link DvRunOptions.maxBytes}). */
+export const DEFAULT_MAX_BYTES = 64 * 1024 * 1024;
 
 export interface DvResult {
   stdout: string;
@@ -143,6 +153,7 @@ function spawnDv(args: readonly string[], opts: DvRunOptions): Promise<DvResult>
   // so plain "dv" wouldn't find "dv.exe" on Windows.
   const dvPath = resolveDvPath(opts.dvPath);
   const timeoutMs = opts.timeoutMs ?? 60_000;
+  const maxBytes = opts.maxBytes ?? DEFAULT_MAX_BYTES;
 
   return new Promise<DvResult>((resolve, reject) => {
     let child: ChildProcess;
@@ -157,11 +168,6 @@ function spawnDv(args: readonly string[], opts: DvRunOptions): Promise<DvResult>
       return;
     }
 
-    const stdoutChunks: Buffer[] = [];
-    const stderrChunks: Buffer[] = [];
-    child.stdout?.on('data', (c: Buffer) => stdoutChunks.push(c));
-    child.stderr?.on('data', (c: Buffer) => stderrChunks.push(c));
-
     // `exited` is the real liveness signal — it flips only in the `close`/
     // `error` handlers when the process is actually gone. `child.killed`
     // cannot be used for this: it becomes true the instant a signal is
@@ -169,6 +175,9 @@ function spawnDv(args: readonly string[], opts: DvRunOptions): Promise<DvResult>
     // `!child.killed` — as this code previously did — meant SIGKILL never
     // fired and a hung dv leaked its semaphore slot forever.
     let exited = false;
+    // Guards single settlement — an output-cap failFast can race the close
+    // event, and the watchdog can race a late exit.
+    let settled = false;
     let timer: NodeJS.Timeout | undefined;
     let killTimer: NodeJS.Timeout | undefined;
     let watchdog: NodeJS.Timeout | undefined;
@@ -181,6 +190,27 @@ function spawnDv(args: readonly string[], opts: DvRunOptions): Promise<DvResult>
       tokenListener?.dispose();
     };
 
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+    let totalBytes = 0;
+    const onData = (chunks: Buffer[]) => (c: Buffer): void => {
+      chunks.push(c);
+      totalBytes += c.length;
+      if (maxBytes > 0 && totalBytes > maxBytes) {
+        // Reject immediately (don't wait for exit) and hard-kill; a runaway
+        // diff must not pin the extension host's heap.
+        if (settled) return;
+        settled = true;
+        cleanup();
+        child.kill('SIGKILL');
+        reject(new Error(
+          `dv ${args.join(' ')} produced more than ${maxBytes} bytes of output; aborted`,
+        ));
+      }
+    };
+    child.stdout?.on('data', onData(stdoutChunks));
+    child.stderr?.on('data', onData(stderrChunks));
+
     // SIGTERM → SIGKILL → abandon. The final stage rejects the promise even
     // if the OS never reaps the process, which is what reclaims the
     // semaphore slot when dv wedges.
@@ -188,7 +218,8 @@ function spawnDv(args: readonly string[], opts: DvRunOptions): Promise<DvResult>
       child.kill('SIGTERM');
       killTimer = setTimeout(() => { if (!exited) child.kill('SIGKILL'); }, TERM_GRACE_MS);
       watchdog = setTimeout(() => {
-        if (exited) return;
+        if (exited || settled) return;
+        settled = true;
         cleanup();
         reject(new Error(`dv ${args.join(' ')} ${reason} and did not exit; abandoning process`));
       }, TERM_GRACE_MS + KILL_GRACE_MS);
@@ -201,6 +232,8 @@ function spawnDv(args: readonly string[], opts: DvRunOptions): Promise<DvResult>
 
     child.on('error', (err) => {
       exited = true;
+      if (settled) return;
+      settled = true;
       cleanup();
       const errno = err as NodeJS.ErrnoException;
       if (errno.code === 'ENOENT' && onDvMissingHandler) {
@@ -212,6 +245,8 @@ function spawnDv(args: readonly string[], opts: DvRunOptions): Promise<DvResult>
 
     child.on('close', (code, signal) => {
       exited = true;
+      if (settled) return;
+      settled = true;
       cleanup();
       resolve({
         stdout: Buffer.concat(stdoutChunks).toString('utf8'),
