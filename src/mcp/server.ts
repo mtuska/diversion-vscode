@@ -6,7 +6,7 @@ import { RepoRegistry } from './repoRegistry.js';
 import { registerAllTools } from './tools.js';
 
 const PKG_NAME = 'diversion-mcp';
-const PKG_VERSION = '0.5.0';
+const PKG_VERSION = '0.7.0';
 
 /**
  * Start the MCP server on stdio. Honors a small set of environment
