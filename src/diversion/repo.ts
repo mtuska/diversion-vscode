@@ -1,6 +1,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { runDv, runDvOrThrow, type CancellationLike } from './cli.js';
+import { safeRepoPath, safeRef } from './argGuard.js';
 import { listFilesRecursive } from '../util/walk.js';
 import { CoreApiClient } from './coreApi.js';
 import { parseStatus, type ParsedStatus } from './parsers/status.js';
@@ -267,7 +268,7 @@ export class Repo {
       );
     }
     const args: string[] = paths && paths.length > 0
-      ? ['commit', ...paths, '-m', message]
+      ? ['commit', ...paths.map((p) => safeRepoPath(this.root, p)), '-m', message]
       : ['commit', '-a', '-m', message];
     await runDvOrThrow(args, { cwd: this.root, dvPath: this.dvPath, timeoutMs: 0 });
   }
@@ -279,7 +280,8 @@ export class Repo {
    * message" feature to feed an LLM only the relevant patch.
    */
   async unifiedDiff(paths?: readonly string[]): Promise<string> {
-    const args = ['diff', '--color', 'never', ...(paths && paths.length > 0 ? paths : [])];
+    const args = ['diff', '--color', 'never',
+      ...(paths && paths.length > 0 ? paths.map((p) => safeRepoPath(this.root, p)) : [])];
     const r = await runDvOrThrow(args, { cwd: this.root, dvPath: this.dvPath, timeoutMs: 60_000 });
     return r.stdout;
   }
@@ -287,7 +289,7 @@ export class Repo {
   /** Unified diff between two refs (commits / branches / tags). */
   async diffBetween(base: string, compare: string): Promise<string> {
     const r = await runDvOrThrow(
-      ['diff', '--color', 'never', '--base', base, '--compare', compare],
+      ['diff', '--color', 'never', '--base', safeRef(base, 'base'), '--compare', safeRef(compare, 'compare')],
       { cwd: this.root, dvPath: this.dvPath, timeoutMs: 120_000 },
     );
     return r.stdout;
@@ -298,7 +300,7 @@ export class Repo {
     // it `dv reset <path>` blocks indefinitely when run without a TTY (which
     // is exactly how we run it from the extension), making the command a
     // silent no-op.
-    await runDvOrThrow(['reset', path, '-f'], { cwd: this.root, dvPath: this.dvPath });
+    await runDvOrThrow(['reset', safeRepoPath(this.root, path), '-f'], { cwd: this.root, dvPath: this.dvPath });
   }
 
   async discardAll(includeNew: boolean): Promise<void> {
@@ -311,7 +313,7 @@ export class Repo {
   }
 
   async createBranch(name: string, switchTo = true): Promise<void> {
-    const args = ['branch', '-c', name, ...(switchTo ? [] : ['--no-checkout'])];
+    const args = ['branch', '-c', safeRef(name, 'branch'), ...(switchTo ? [] : ['--no-checkout'])];
     await runDvOrThrow(args, { cwd: this.root, dvPath: this.dvPath, timeoutMs: 0 });
   }
 
@@ -324,13 +326,13 @@ export class Repo {
     if (opts.takeChanges) flags.push('--take-changes');
     if (opts.shelveChanges) flags.push('--shelve-changes');
     if (opts.discardChanges) flags.push('--discard-changes');
-    await runDvOrThrow(['checkout', ref, ...flags], {
+    await runDvOrThrow(['checkout', safeRef(ref), ...flags], {
       cwd: this.root, dvPath: this.dvPath, timeoutMs: 0,
     });
   }
 
   async merge(ref: string): Promise<void> {
-    await runDvOrThrow(['merge', ref], { cwd: this.root, dvPath: this.dvPath, timeoutMs: 0 });
+    await runDvOrThrow(['merge', safeRef(ref)], { cwd: this.root, dvPath: this.dvPath, timeoutMs: 0 });
   }
 
   async logOneline(limit = 50): Promise<CommitSummary[]> {
@@ -416,14 +418,14 @@ export class Repo {
 
   /** Delete a branch. The default branch cannot be deleted. */
   async deleteBranch(branch: string): Promise<void> {
-    await runDvOrThrow(['branch', '-d', branch, '-f'], {
+    await runDvOrThrow(['branch', '-d', safeRef(branch, 'branch'), '-f'], {
       cwd: this.root, dvPath: this.dvPath, timeoutMs: 30_000,
     });
   }
 
   /** Rename a branch. */
   async renameBranch(branch: string, newName: string): Promise<void> {
-    await runDvOrThrow(['branch', '-r', branch, newName], {
+    await runDvOrThrow(['branch', '-r', safeRef(branch, 'branch'), safeRef(newName, 'branch')], {
       cwd: this.root, dvPath: this.dvPath, timeoutMs: 30_000,
     });
   }
@@ -439,7 +441,7 @@ export class Repo {
 
   /** Show the contents of a single shelf (raw dv text — format is human-formatted). */
   async showShelf(shelf: string): Promise<string> {
-    const r = await runDvOrThrow(['shelf', 'show', shelf], {
+    const r = await runDvOrThrow(['shelf', 'show', safeRef(shelf, 'shelf')], {
       cwd: this.root, dvPath: this.dvPath, timeoutMs: 30_000,
     });
     return r.stdout;
@@ -476,7 +478,7 @@ export class Repo {
 
   /** Per-line attribution for a workspace-relative path. */
   async annotate(relPath: string): Promise<Annotation[]> {
-    const r = await runDvOrThrow(['annotate', relPath], {
+    const r = await runDvOrThrow(['annotate', safeRepoPath(this.root, relPath)], {
       cwd: this.root, dvPath: this.dvPath, timeoutMs: 60_000,
     });
     return parseAnnotation(r.stdout);
@@ -493,28 +495,28 @@ export class Repo {
 
   /** Cherry-pick a commit's changes into the current workspace. */
   async cherryPick(commitId: string): Promise<void> {
-    await runDvOrThrow(['cherry-pick', commitId], {
+    await runDvOrThrow(['cherry-pick', safeRef(commitId, 'commit')], {
       cwd: this.root, dvPath: this.dvPath, timeoutMs: 0,
     });
   }
 
   /** Revert the changes of a past commit (creates a new commit that inverts it). */
   async revertCommit(commitId: string, conflictResolution?: 'manual' | 'keep-current' | 'accept-incoming'): Promise<void> {
-    const args = ['revert', commitId];
+    const args = ['revert', safeRef(commitId, 'commit')];
     if (conflictResolution) args.push('--conflict_resolution', conflictResolution);
     await runDvOrThrow(args, { cwd: this.root, dvPath: this.dvPath, timeoutMs: 0 });
   }
 
   /** Set the workspace contents to match the given commit (does not rewrite history). */
   async revertToCommit(commitId: string): Promise<void> {
-    await runDvOrThrow(['revert-to-commit', commitId], {
+    await runDvOrThrow(['revert-to-commit', safeRef(commitId, 'commit')], {
       cwd: this.root, dvPath: this.dvPath, timeoutMs: 0,
     });
   }
 
   /** Restore a single file from a ref into the workspace. */
   async restorePath(ref: string, relPath: string): Promise<void> {
-    await runDvOrThrow(['restore', relPath, '--source', ref], {
+    await runDvOrThrow(['restore', safeRepoPath(this.root, relPath), '--source', safeRef(ref)], {
       cwd: this.root, dvPath: this.dvPath, timeoutMs: 0,
     });
   }
@@ -524,9 +526,9 @@ export class Repo {
    * is omitted). dv accepts an optional description via `-a`.
    */
   async createTag(name: string, commitId?: string, description?: string): Promise<void> {
-    const args = ['tag', '-c', name];
+    const args = ['tag', '-c', safeRef(name, 'tag')];
     if (description) args.push('-a', description);
-    if (commitId) args.push('--ref', commitId);
+    if (commitId) args.push('--ref', safeRef(commitId, 'commit'));
     await runDvOrThrow(args, { cwd: this.root, dvPath: this.dvPath, timeoutMs: 30_000 });
   }
 
@@ -551,26 +553,26 @@ export class Repo {
    * @param keepWorkingChanges  if true, pass --no-reset to keep working tree intact.
    */
   async createShelf(name: string, paths?: readonly string[], keepWorkingChanges = false): Promise<void> {
-    const args = ['shelf', 'create', name];
-    if (paths && paths.length > 0) args.push(...paths);
+    const args = ['shelf', 'create', safeRef(name, 'shelf')];
+    if (paths && paths.length > 0) args.push(...paths.map((p) => safeRepoPath(this.root, p)));
     if (keepWorkingChanges) args.push('--no-reset');
     await runDvOrThrow(args, { cwd: this.root, dvPath: this.dvPath, timeoutMs: 0 });
   }
 
   async applyShelf(shelf: string, keepShelfAfter = false): Promise<void> {
-    const args = ['shelf', 'apply', shelf, '-f'];
+    const args = ['shelf', 'apply', safeRef(shelf, 'shelf'), '-f'];
     if (keepShelfAfter) args.push('--keep');
     await runDvOrThrow(args, { cwd: this.root, dvPath: this.dvPath, timeoutMs: 0 });
   }
 
   async deleteShelf(shelf: string): Promise<void> {
-    await runDvOrThrow(['shelf', 'delete', shelf, '-f'], {
+    await runDvOrThrow(['shelf', 'delete', safeRef(shelf, 'shelf'), '-f'], {
       cwd: this.root, dvPath: this.dvPath, timeoutMs: 30_000,
     });
   }
 
   async renameShelf(shelf: string, newName: string): Promise<void> {
-    await runDvOrThrow(['shelf', 'rename', shelf, newName], {
+    await runDvOrThrow(['shelf', 'rename', safeRef(shelf, 'shelf'), safeRef(newName, 'shelf')], {
       cwd: this.root, dvPath: this.dvPath, timeoutMs: 30_000,
     });
   }
@@ -589,13 +591,13 @@ export class Repo {
 
   /** Acquire a hard lock on the given path. */
   async lockPath(relPath: string): Promise<void> {
-    await runDvOrThrow(['lock', relPath], { cwd: this.root, dvPath: this.dvPath, timeoutMs: 30_000 });
+    await runDvOrThrow(['lock', safeRepoPath(this.root, relPath)], { cwd: this.root, dvPath: this.dvPath, timeoutMs: 30_000 });
     this.locksCache = undefined;
   }
 
   /** Release a lock on the given path. */
   async unlockPath(relPath: string): Promise<void> {
-    await runDvOrThrow(['lock', '-d', relPath], { cwd: this.root, dvPath: this.dvPath, timeoutMs: 30_000 });
+    await runDvOrThrow(['lock', '-d', safeRepoPath(this.root, relPath)], { cwd: this.root, dvPath: this.dvPath, timeoutMs: 30_000 });
     this.locksCache = undefined;
   }
 
