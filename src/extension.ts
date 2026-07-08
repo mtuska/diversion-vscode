@@ -126,7 +126,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     rootForPath: (fsPath: string) => {
       for (const [root, p] of providers) {
         if (isInsideOrEqual(root, fsPath)) {
-          return { root, dvPath: p.repo.binaryPath };
+          return { root, dvPath: p.repo.binaryPath, commitId: p.repo.info.commitId };
         }
       }
       return undefined;

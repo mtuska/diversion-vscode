@@ -57,13 +57,18 @@ export class DiversionScmProvider implements vscode.Disposable {
   /** Signature of the last rendered state; lets an identical refresh no-op. */
   private lastSignature: string | undefined;
 
+  /** QuickDiff base-content provider, retained so we can invalidate its cache
+   *  when HEAD moves (its base content is only stale after a commit/checkout). */
+  private readonly quickDiff?: { invalidateAll?(): void };
+
   constructor(
     readonly repo: Repo,
     private readonly logger: Logger,
     private readonly storage: vscode.Memento,
-    quickDiffProvider?: vscode.QuickDiffProvider,
+    quickDiffProvider?: vscode.QuickDiffProvider & { invalidateAll?(): void },
     private readonly changeDecorations?: ChangeDecorationsProvider,
   ) {
+    this.quickDiff = quickDiffProvider;
     this.storageKey = `diversion.staged.${repo.info.workspaceId}`;
     const persisted = this.storage.get<string[]>(this.storageKey, []);
     for (const p of persisted) this.stagedPaths.add(p);
@@ -265,6 +270,9 @@ export class DiversionScmProvider implements vscode.Disposable {
       if (moved) {
         const currentRef = this.history?.currentHistoryItemRef;
         this.history?.notifyRefsChanged(currentRef ? { modified: [currentRef] } : {});
+        // Base (last-committed) content changed under every open editor —
+        // re-fetch QuickDiff gutters (previously left stale until reopen).
+        this.quickDiff?.invalidateAll?.();
       }
       this.changeDecorations?.setRepoState(this.repo.root, decorationStates);
       this.lastSignature = signature;

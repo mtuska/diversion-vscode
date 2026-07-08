@@ -13,7 +13,7 @@ import type { Logger } from '../util/log.js';
 export const DV_SCHEME = 'dv-base';
 
 interface RepoLookup {
-  rootForPath(fsPath: string): { root: string; dvPath: string | undefined } | undefined;
+  rootForPath(fsPath: string): { root: string; dvPath: string | undefined; commitId?: string } | undefined;
   /**
    * Returns the current change kind for an absolute filesystem path, or
    * undefined if the file isn't in the SCM change set. Used to skip the
@@ -57,19 +57,40 @@ export class QuickDiff implements vscode.QuickDiffProvider, vscode.TextDocumentC
   private readonly _onDidChange = new vscode.EventEmitter<vscode.Uri>();
   readonly onDidChange = this._onDidChange.event;
 
+  /** dv-base URIs we've served, keyed by the underlying file path, so we can
+   *  fire targeted re-fetches when the base changes. */
+  private readonly served = new Map<string, vscode.Uri>();
+  /**
+   * Cache of successfully-resolved base content, keyed by file path. The base
+   * (last-committed) version is invariant under working-tree edits — it only
+   * changes when HEAD moves — so we key on the commit ID and reuse the result
+   * across the many re-requests VS Code makes while the user types. Only true
+   * reverse-apply results are cached; the working-content fallbacks are not
+   * (they aren't the real base).
+   */
+  private readonly baseCache = new Map<string, { commitId: string | undefined; content: string }>();
+
   constructor(
     private readonly lookup: RepoLookup,
     private readonly logger: Logger,
   ) {}
 
-  /** Notify VS Code that base content for these files may have changed. */
-  invalidateAll(roots: Iterable<string>): void {
-    // We don't track every open document; refire on the URI form so VS Code
-    // re-fetches when the resource is requested. A single fire is enough — we
-    // map by the original working URI.
-    for (const root of roots) {
-      this._onDidChange.fire(vscode.Uri.file(root).with({ scheme: DV_SCHEME }));
-    }
+  /**
+   * Re-fetch base content for every open dv-base document. Call when HEAD may
+   * have moved (commit / checkout / merge / revert) — the previous
+   * `invalidateAll(roots)` fired the repo-root URI, which never matched a
+   * per-file document, so gutters stayed stale until the editor was reopened.
+   */
+  invalidateAll(): void {
+    this.baseCache.clear();
+    for (const uri of this.served.values()) this._onDidChange.fire(uri);
+  }
+
+  /** Re-fetch base content for a single file (by its working fsPath). */
+  invalidate(fsPath: string): void {
+    this.baseCache.delete(fsPath);
+    const uri = this.served.get(fsPath);
+    if (uri) this._onDidChange.fire(uri);
   }
 
   // QuickDiffProvider: return the URI of the "original" (base) version.
@@ -113,6 +134,17 @@ export class QuickDiff implements vscode.QuickDiffProvider, vscode.TextDocumentC
     if (!lookup) {
       this.logger.warn(`QuickDiff: no repo registered for ${uri.fsPath}`);
       return '';
+    }
+
+    // Record the URI so a later HEAD move can fire a targeted re-fetch, and
+    // serve a cached base if HEAD hasn't moved since we computed it — avoids
+    // re-reading the file and spawning `dv diff` on every re-request.
+    this.served.set(uri.fsPath, uri);
+    const commitId = lookup.commitId;
+    const cached = this.baseCache.get(uri.fsPath);
+    if (cached && cached.commitId === commitId) {
+      this.logger.debug(`[QuickDiff] cache hit for ${uri.fsPath} @ ${commitId ?? '<no-commit>'}`);
+      return cached.content;
     }
 
     // Bail early on binary — dv's diff output for binary is just a marker
@@ -186,6 +218,10 @@ export class QuickDiff implements vscode.QuickDiffProvider, vscode.TextDocumentC
       `dv=${tAfterDv - tAfterRead}ms, parse+apply=${tAfterApply - tAfterDv}ms, ` +
       `dv-bytes=${stdout.length})`
     );
+    // Cache only the genuine base (a successful reverse-apply). The working-
+    // content fallbacks above are intentionally not cached — they aren't the
+    // committed base and would be wrong to serve after further edits.
+    this.baseCache.set(uri.fsPath, { commitId, content: base });
     return base;
   }
 
@@ -228,5 +264,9 @@ export class QuickDiff implements vscode.QuickDiffProvider, vscode.TextDocumentC
     this.logger.warn(lines.join('\n'));
   }
 
-  dispose(): void { this._onDidChange.dispose(); }
+  dispose(): void {
+    this._onDidChange.dispose();
+    this.served.clear();
+    this.baseCache.clear();
+  }
 }
