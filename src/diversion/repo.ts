@@ -380,9 +380,10 @@ export class Repo {
    * `lookback` commits, then ask `dv show --name-status` for each and
    * intersect their changed paths with our dirty set.
    *
-   * Cost is O(lookback) dv invocations — bounded by the caller. The
-   * semaphore in cli.ts caps real concurrency so we don't blow up the
-   * agent.
+   * Cost is O(lookback) CoreAPI requests — bounded by the caller. The
+   * CoreAPI client's own request semaphore caps real concurrency (this path
+   * is HTTP, not the dv CLI, so cli.ts's process semaphore does not apply),
+   * so a large `lookback` can't open hundreds of sockets at once.
    */
   async overlappingCommits(opts: {
     lookback?: number;

@@ -150,6 +150,56 @@ describe('CoreApiClient.commitChanges (compare)', () => {
   });
 });
 
+describe('CoreApiClient immutable-read caching', () => {
+  it('caches commitChanges by commit ID (single fetch pair on repeat)', async () => {
+    const fn = stubFetch([
+      ['/commits', { items: [{ commit_id: 'dv.commit.46', commit_message: 'x', created_ts: 1, parents: ['dv.commit.45'] }] }],
+      ['/compare', { object: 'ComparisonItem', items: [] }],
+    ]);
+    const client = new CoreApiClient(fakeDaemon(), logger);
+    await client.commitChanges(REPO, 'dv.commit.46');
+    const callsAfterFirst = fn.mock.calls.length; // one /commits + one /compare
+    await client.commitChanges(REPO, 'dv.commit.46');
+    expect(fn.mock.calls.length).toBe(callsAfterFirst); // fully served from cache
+    expect(callsAfterFirst).toBe(2);
+  });
+
+  it('coalesces concurrent identical commit fetches into one request', async () => {
+    const fn = stubFetch([
+      ['/commits', { items: [{ commit_id: 'dv.commit.7', commit_message: 'x', created_ts: 1, parents: [] }] }],
+    ]);
+    const client = new CoreApiClient(fakeDaemon(), logger);
+    await Promise.all([
+      client.getCommit(REPO, 'dv.commit.7'),
+      client.getCommit(REPO, 'dv.commit.7'),
+      client.getCommit(REPO, 'dv.commit.7'),
+    ]);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not cache a compare whose base is a mutable branch ref', async () => {
+    const fn = stubFetch([['/compare', { object: 'ComparisonItem', items: [] }]]);
+    const client = new CoreApiClient(fakeDaemon(), logger);
+    await client.compare(REPO, 'dv.branch.1', 'dv.commit.2');
+    await client.compare(REPO, 'dv.branch.1', 'dv.commit.2');
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('CoreApiClient token single-flight', () => {
+  it('mints one token for concurrent cold-start requests', async () => {
+    stubFetch([['/branches', { object: 'Branch', items: [] }]]);
+    const tokenCalls = { n: 0 };
+    const client = new CoreApiClient(fakeDaemon({ tokenCalls }), logger);
+    await Promise.all([
+      client.listBranches(REPO),
+      client.listBranches(REPO),
+      client.listBranches(REPO),
+    ]);
+    expect(tokenCalls.n).toBe(1);
+  });
+});
+
 describe('CoreApiClient.listShelves', () => {
   it('formats a description from timestamp + branch', async () => {
     stubFetch([['/shelves', {
