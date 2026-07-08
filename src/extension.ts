@@ -34,6 +34,22 @@ let shelvesProvider: ShelvesTreeProvider | undefined;
 let commitContent: CommitContentProvider | undefined;
 const providers = new Map<string, DiversionScmProvider>();
 const ignoreManagers = new Map<string, IgnoreManager>();
+/**
+ * FS watchers keyed by repo root. Owned here (not pushed into
+ * `context.subscriptions`) so a re-scan can dispose the previous set instead
+ * of stacking a fresh recursive watcher on top for every open folder each time
+ * `scanWorkspaceFolders` runs — which previously leaked watchers on daemon
+ * reconnect / folder change and kept firing refreshes for removed repos.
+ */
+const repoWatchers = new Map<string, vscode.Disposable[]>();
+
+function disposeRepoWatchers(root: string): void {
+  const existing = repoWatchers.get(root);
+  if (existing) {
+    for (const d of existing) d.dispose();
+    repoWatchers.delete(root);
+  }
+}
 let activationContext: vscode.ExtensionContext | undefined;
 /** Whether the "dv binary not found" toast has been shown this session. Reset on `diversion.path` change. */
 let dvMissingNotified = false;
@@ -293,6 +309,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
 export function deactivate(): void {
   logger?.info('Diversion extension deactivating');
+  for (const root of [...repoWatchers.keys()]) disposeRepoWatchers(root);
   for (const p of providers.values()) p.dispose();
   providers.clear();
   statusBar?.dispose();
@@ -511,12 +528,23 @@ async function scanWorkspaceFolders(): Promise<void> {
 
     // One watcher per open folder so VS Code's workspace-folder-scoped FS
     // event delivery still works for sub-dir opens. They all feed the same
-    // provider — refresh fires regardless of which folder the change came from.
+    // provider — refresh fires regardless of which folder the change came
+    // from. Rebuild the set each scan (open folders may have changed),
+    // disposing the prior set first so watchers don't accumulate.
+    disposeRepoWatchers(root);
     const ignoreMgrForRoot = ignoreManagers.get(root);
-    for (const folderPath of openFolders) {
-      const watcherDisposable = watchWorkspace(folderPath, async (uri) => {
+    const watchers = openFolders.map((folderPath) =>
+      watchWorkspace(folderPath, async (uri) => {
+        // A `.dv-conflict` sidecar appearing/disappearing is the only thing
+        // that changes the conflict set — invalidate the (otherwise cached,
+        // walk-backed) conflict list so the next refresh re-scans.
+        if (uri.fsPath.includes('.dv-conflict')) provider!.repo.invalidateConflictCache();
         provider!.scheduleRefresh(settings.refreshDebounceMs);
-        void lockDecorations?.refresh();
+        // NOTE: locks are deliberately NOT refreshed here. Locks change via
+        // lock/unlock commands (which force a refresh) and the provider's own
+        // 5s TTL + on-demand fetch — refreshing on every file write thrashed
+        // the lock cache and fired a whole-window decoration invalidation per
+        // event, which on a large sync meant tens of thousands of re-queries.
         commitContent?.invalidate(uri.fsPath);
         // If a .dvignore / .gitignore file changed, reload the matcher
         // and re-fire decorations across the whole repo.
@@ -524,13 +552,14 @@ async function scanWorkspaceFolders(): Promise<void> {
           const reloaded = await ignoreMgrForRoot.maybeReload(uri.fsPath);
           if (reloaded) changeDecorations?.refresh();
         }
-      });
-      activationContext?.subscriptions.push(watcherDisposable);
-    }
+      }),
+    );
+    repoWatchers.set(root, watchers);
   }
 
   for (const [key, provider] of [...providers.entries()]) {
     if (!foldersByRoot.has(key)) {
+      disposeRepoWatchers(key);
       provider.dispose();
       providers.delete(key);
       changeDecorations?.detachIgnoreManager(key);
@@ -903,6 +932,9 @@ async function markResolvedCommand(arg?: vscode.Uri | vscode.SourceControlResour
   if (ok !== 'Delete sidecar') return;
   try {
     await deleteSidecar(conflict.sidecarPath);
+    // Invalidate synchronously — don't wait for the watcher's delete event,
+    // which may land after this refresh and leave the resolved conflict shown.
+    provider.repo.invalidateConflictCache();
     await provider.refresh();
   } catch (err) {
     void vscode.window.showErrorMessage(`Diversion: delete sidecar failed: ${(err as Error).message}`);

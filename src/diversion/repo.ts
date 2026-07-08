@@ -157,7 +157,7 @@ export class Repo {
       runDvOrThrow(['diff', '--name-status', '--color', 'never'], {
         cwd: this.root, dvPath: this.dvPath, token,
       }),
-      findSyncConflicts(this.root),
+      this.ensureConflicts(),
     ]);
     const status = parseStatus(statusResult.stdout);
     let changes = parseDiffNameStatus(diffResult.stdout);
@@ -197,17 +197,32 @@ export class Repo {
     // siblings) do we walk the disk to populate file entries — an
     // intentional trade-off because we'd otherwise show a single un-
     // commit-able folder row and the user would have nothing to act on.
-    const addedPaths = changes
-      .filter((c) => c.kind === 'added')
-      .map((c) => c.path);
+    const addedChanges = changes.filter((c) => c.kind === 'added');
+    if (addedChanges.length === 0) return changes;
+
     const sep = path.sep;
-    const hasAddedDescendant = (parentRel: string): boolean => {
-      const prefix = parentRel.endsWith(sep) ? parentRel : parentRel + sep;
-      const altPrefix = parentRel.endsWith('/') ? parentRel : parentRel + '/';
-      return addedPaths.some(
-        (p) => p !== parentRel && (p.startsWith(prefix) || p.startsWith(altPrefix)),
-      );
-    };
+    // Directories that have at least one added descendant. Built in O(total
+    // path length) by recording every ancestor prefix of each added path —
+    // replaces the previous O(n²) `addedPaths.some(startsWith)` scan that was
+    // re-run per directory entry (10⁸ string ops on a 10k-file added tree).
+    const parentsWithAddedDescendant = new Set<string>();
+    for (const c of addedChanges) {
+      const p = c.path;
+      for (let i = 0; i < p.length; i++) {
+        if (p[i] === '/' || p[i] === sep) parentsWithAddedDescendant.add(p.slice(0, i));
+      }
+    }
+
+    // Stat the leaf added entries in bounded-parallel batches instead of one
+    // serial `await fs.stat` each. Directories dv already enumerated (those in
+    // the descendant set) need no stat — we skip them outright.
+    const toStat = addedChanges.filter((c) => !parentsWithAddedDescendant.has(c.path));
+    const statByPath = new Map<string, import('node:fs').Stats | undefined>();
+    await mapWithConcurrency(toStat, 16, async (change) => {
+      const abs = path.join(this.identity.workspacePath, change.path);
+      try { statByPath.set(change.path, await fs.stat(abs)); }
+      catch { statByPath.set(change.path, undefined); /* path no longer present */ }
+    });
 
     const out: FileChange[] = [];
     const seenAdded = new Set<string>();
@@ -222,21 +237,20 @@ export class Repo {
         out.push(change);
         continue;
       }
-      const abs = path.join(this.identity.workspacePath, change.path);
-      let stat: import('node:fs').Stats | undefined;
-      try { stat = await fs.stat(abs); } catch { /* path no longer present */ }
-      if (!stat?.isDirectory()) {
-        emitAdded(change.path);
-        continue;
-      }
-      if (hasAddedDescendant(change.path)) {
+      if (parentsWithAddedDescendant.has(change.path)) {
         // dv already listed file children — they'll be emitted by their
         // own iteration. Drop the directory entry itself.
         continue;
       }
-      // No file children in dv's output — fall back to a disk walk to
-      // populate the panel. Caveat: anything `.dvignore`d inside this
-      // subtree won't be filtered (we don't read .dvignore ourselves).
+      const stat = statByPath.get(change.path);
+      if (!stat?.isDirectory()) {
+        emitAdded(change.path);
+        continue;
+      }
+      // A directory dv listed WITHOUT enumerating any children — fall back to
+      // a disk walk to populate the panel. Caveat: anything `.dvignore`d
+      // inside this subtree won't be filtered (we don't read .dvignore here).
+      const abs = path.join(this.identity.workspacePath, change.path);
       const files = await listFilesRecursive(abs);
       for (const file of files) {
         emitAdded(path.relative(this.identity.workspacePath, file));
@@ -590,12 +604,52 @@ export class Repo {
     this.locksCache = undefined;
   }
 
+  /**
+   * Sync-conflict sidecars, cached. `findSyncConflicts` walks the entire
+   * workspace tree, which is far too expensive to repeat on every refresh
+   * (save / focus / watcher batch) on a large repo. Conflicts are represented
+   * by on-disk `*.dv-conflict` files, so the FS watcher is the authoritative
+   * signal for their appearance/disappearance — it calls
+   * {@link invalidateConflictCache} on matching events. Between those events
+   * the set is stable and we serve it from cache.
+   */
+  private async ensureConflicts(): Promise<SyncConflict[]> {
+    if (this.conflictCache) return this.conflictCache;
+    this.conflictCache = await findSyncConflicts(this.root);
+    return this.conflictCache;
+  }
+
+  /** Drop the cached conflict set; the next {@link getState} re-walks. */
+  invalidateConflictCache(): void {
+    this.conflictCache = undefined;
+  }
+
   private locksCache: LockInfo[] | undefined;
   private locksCacheAt = 0;
+  private conflictCache: SyncConflict[] | undefined;
 }
 
 export async function deleteSidecar(sidecarPath: string): Promise<void> {
   await fs.unlink(sidecarPath);
+}
+
+/**
+ * Run `fn` over `items` with at most `limit` in flight. A tiny worker-pool —
+ * used to batch filesystem stats that would otherwise run strictly serially.
+ */
+async function mapWithConcurrency<T>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<void>,
+): Promise<void> {
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const idx = next++;
+      await fn(items[idx]!);
+    }
+  });
+  await Promise.all(workers);
 }
 
 const RELATIVE_RE = /^(\d+)\s+(second|minute|hour|day|week|month|year)s?\s+ago$/i;
