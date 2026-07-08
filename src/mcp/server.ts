@@ -17,6 +17,7 @@ const PKG_VERSION = '0.5.0';
  *   DIVERSION_DAEMON_URL    Override the agent base URL (e.g. http://127.0.0.1:38825).
  *   DIVERSION_CORE_API_URL  Override the CoreAPI base URL (default https://api.diversion.dev/v0).
  *   DIVERSION_MAX_PARALLEL  Cap on concurrent dv processes (default 4).
+ *   DIVERSION_MCP_READONLY  If set (1/true/yes), register only read tools.
  *   DIVERSION_LOG_LEVEL     off|error|warn|info|debug
  *
  * Repos are auto-discovered via the dv agent's `/workspaces` registry,
@@ -29,6 +30,8 @@ export async function runMcpServer(): Promise<void> {
 
   const maxParallel = clampInt(process.env.DIVERSION_MAX_PARALLEL, 1, 32, 4);
   setDvConcurrencyLimit(maxParallel);
+
+  const readOnly = isTruthy(process.env.DIVERSION_MCP_READONLY);
 
   const registry = new RepoRegistry(logger, {
     dvPath: process.env.DIVERSION_DV_PATH,
@@ -47,11 +50,14 @@ export async function runMcpServer(): Promise<void> {
         'repos are registered. Multiple-repo mode requires the `repo` argument on every tool.',
     },
   );
-  registerAllTools(server, registry);
+  registerAllTools(server, registry, { readOnly });
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  logger.info(`MCP server "${PKG_NAME}" v${PKG_VERSION} ready on stdio.`);
+  logger.info(
+    `MCP server "${PKG_NAME}" v${PKG_VERSION} ready on stdio` +
+    (readOnly ? ' (read-only mode — write tools disabled).' : '.'),
+  );
 
   const shutdown = (sig: NodeJS.Signals): void => {
     logger.info(`Received ${sig}, shutting down.`);
@@ -66,4 +72,9 @@ function clampInt(raw: string | undefined, min: number, max: number, fallback: n
   const n = Number.parseInt(raw, 10);
   if (!Number.isFinite(n)) return fallback;
   return Math.max(min, Math.min(max, n));
+}
+
+function isTruthy(raw: string | undefined): boolean {
+  if (!raw) return false;
+  return ['1', 'true', 'yes', 'on'].includes(raw.trim().toLowerCase());
 }

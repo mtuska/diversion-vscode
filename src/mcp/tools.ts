@@ -65,7 +65,22 @@ function nonEmpty(name: string, value: string | undefined): string {
   return trimmed;
 }
 
-export function registerAllTools(server: McpServer, registry: RepoRegistry): void {
+export interface RegisterToolsOptions {
+  /**
+   * When true, only the read-only tools are registered — every mutating tool
+   * (commit, checkout, discard, delete-branch, merge, revert, shelf mutations,
+   * lock, sync pause/resume, …) is omitted entirely. Gated by the
+   * DIVERSION_MCP_READONLY env var so an operator can hand an agent a
+   * look-but-don't-touch surface.
+   */
+  readOnly?: boolean;
+}
+
+export function registerAllTools(
+  server: McpServer,
+  registry: RepoRegistry,
+  opts: RegisterToolsOptions = {},
+): void {
   // ─── read tools ──────────────────────────────────────────────────────
 
   server.registerTool(
@@ -461,6 +476,9 @@ export function registerAllTools(server: McpServer, registry: RepoRegistry): voi
   );
 
   // ─── write tools ─────────────────────────────────────────────────────
+  // Everything below mutates repository or workspace state. In read-only
+  // mode we stop here so none of it is registered or reachable.
+  if (opts.readOnly) return;
 
   server.registerTool(
     'dv_commit',
