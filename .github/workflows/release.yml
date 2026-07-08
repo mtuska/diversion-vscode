@@ -100,7 +100,12 @@ jobs:
       # upgrade the npm used for the publish step (build/test above already
       # ran under the pinned Node's npm via `npm ci`).
       - name: Upgrade npm for trusted publishing
-        run: npm install -g npm@latest
+        # Pin instead of @latest: a broken npm@latest self-install left the
+        # `sigstore` provenance dependency (bundled in libnpmpublish) missing,
+        # which crashed `npm publish` with MODULE_NOT_FOUND and blocked the
+        # release. 11.5.1 is the documented minimum for trusted publishing and
+        # installs a complete tree.
+        run: npm install -g npm@11.5.1
 
       # Publish the standalone MCP server to npm under @mtuska/diversion-mcp,
       # so users can run `npx @mtuska/diversion-mcp` without preinstalling
@@ -118,6 +123,11 @@ jobs:
       # self-contained (esbuild inlined the MCP SDK + zod), so the
       # published tarball is tiny and has no runtime dependencies.
       - name: Publish @mtuska/diversion-mcp to npm
+        # Best-effort: the VS Marketplace publish below is the primary
+        # deliverable and must not be blocked by an npm registry / provenance
+        # hiccup. If this fails, the run continues to the Marketplace publish
+        # and the npm package can be re-published via workflow_dispatch.
+        continue-on-error: true
         env:
           TAG: ${{ steps.resolve.outputs.tag }}
         run: |
