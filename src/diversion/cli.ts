@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import * as path from 'node:path';
 import { Semaphore } from '../util/semaphore.js';
 
 /**
@@ -57,7 +58,17 @@ export interface DvRunOptions {
   dvPath?: string;
   /** Extra environment variables. */
   env?: NodeJS.ProcessEnv;
+  /**
+   * Cap on combined stdout+stderr bytes buffered before the process is killed
+   * and the call rejects. Guards the extension host against OOM on a
+   * pathologically large diff/status. Default {@link DEFAULT_MAX_BYTES};
+   * pass 0 to disable.
+   */
+  maxBytes?: number;
 }
+
+/** Default cap on buffered dv output (see {@link DvRunOptions.maxBytes}). */
+export const DEFAULT_MAX_BYTES = 64 * 1024 * 1024;
 
 export interface DvResult {
   stdout: string;
@@ -98,13 +109,51 @@ export function runDv(args: readonly string[], opts: DvRunOptions): Promise<DvRe
   return dvSemaphore.run(() => spawnDv(args, opts));
 }
 
+/** Grace between SIGTERM and SIGKILL when terminating a dv process. */
+const TERM_GRACE_MS = 2_000;
+/**
+ * Grace between SIGKILL and abandoning the process (settling the promise
+ * anyway). If dv is blocked in uninterruptible I/O on a wedged network mount
+ * even SIGKILL won't reap it promptly — but we must still settle so the
+ * semaphore slot is released, or a few hangs deadlock every future dv call.
+ */
+const KILL_GRACE_MS = 3_000;
+
+/**
+ * Resolve the `dv` binary to spawn, rejecting the one shape that is a
+ * privilege-escalation vector: a *relative* path containing a separator
+ * (e.g. `./tools/dv`). Because we spawn with `cwd` set to the repo root, such
+ * a value resolves against the repo itself — so a malicious repo could ship
+ * both a `.vscode/settings.json` pointing `diversion.path` there and the
+ * binary, and merely opening the folder would execute it. `diversion.path`
+ * is also `machine`-scoped in package.json (workspace settings can't override
+ * it); this is defense-in-depth that also covers the MCP env-var path.
+ *
+ * Allowed: empty (PATH lookup of the platform default), a bare command name
+ * with no separator (PATH lookup), or an absolute path the user configured on
+ * their own machine.
+ */
+export function resolveDvPath(configured: string | undefined): string {
+  const trimmed = configured?.trim();
+  if (!trimmed) return process.platform === 'win32' ? 'dv.exe' : 'dv';
+  const hasSeparator = /[\\/]/.test(trimmed);
+  if (hasSeparator && !path.isAbsolute(trimmed)) {
+    throw new Error(
+      `Refusing to run dv from a relative path "${trimmed}" — set diversion.path ` +
+      `to an absolute path or a bare command name on PATH.`,
+    );
+  }
+  return trimmed;
+}
+
 function spawnDv(args: readonly string[], opts: DvRunOptions): Promise<DvResult> {
   // Resolve the dv binary. Settings can override; otherwise default to the
   // platform-conventional name so PATH lookups work without shell expansion.
   // Node's `spawn` (without `shell: true`) does NOT apply Windows PATHEXT,
   // so plain "dv" wouldn't find "dv.exe" on Windows.
-  const dvPath = opts.dvPath ?? (process.platform === 'win32' ? 'dv.exe' : 'dv');
+  const dvPath = resolveDvPath(opts.dvPath);
   const timeoutMs = opts.timeoutMs ?? 60_000;
+  const maxBytes = opts.maxBytes ?? DEFAULT_MAX_BYTES;
 
   return new Promise<DvResult>((resolve, reject) => {
     let child: ChildProcess;
@@ -119,28 +168,73 @@ function spawnDv(args: readonly string[], opts: DvRunOptions): Promise<DvResult>
       return;
     }
 
+    // `exited` is the real liveness signal — it flips only in the `close`/
+    // `error` handlers when the process is actually gone. `child.killed`
+    // cannot be used for this: it becomes true the instant a signal is
+    // *delivered* (i.e. right after SIGTERM), so guarding SIGKILL on
+    // `!child.killed` — as this code previously did — meant SIGKILL never
+    // fired and a hung dv leaked its semaphore slot forever.
+    let exited = false;
+    // Guards single settlement — an output-cap failFast can race the close
+    // event, and the watchdog can race a late exit.
+    let settled = false;
+    let timer: NodeJS.Timeout | undefined;
+    let killTimer: NodeJS.Timeout | undefined;
+    let watchdog: NodeJS.Timeout | undefined;
+    let tokenListener: { dispose(): void } | undefined;
+
+    const cleanup = (): void => {
+      if (timer) clearTimeout(timer);
+      if (killTimer) clearTimeout(killTimer);
+      if (watchdog) clearTimeout(watchdog);
+      tokenListener?.dispose();
+    };
+
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
-    child.stdout?.on('data', (c: Buffer) => stdoutChunks.push(c));
-    child.stderr?.on('data', (c: Buffer) => stderrChunks.push(c));
+    let totalBytes = 0;
+    const onData = (chunks: Buffer[]) => (c: Buffer): void => {
+      chunks.push(c);
+      totalBytes += c.length;
+      if (maxBytes > 0 && totalBytes > maxBytes) {
+        // Reject immediately (don't wait for exit) and hard-kill; a runaway
+        // diff must not pin the extension host's heap.
+        if (settled) return;
+        settled = true;
+        cleanup();
+        child.kill('SIGKILL');
+        reject(new Error(
+          `dv ${args.join(' ')} produced more than ${maxBytes} bytes of output; aborted`,
+        ));
+      }
+    };
+    child.stdout?.on('data', onData(stdoutChunks));
+    child.stderr?.on('data', onData(stderrChunks));
 
-    let timer: NodeJS.Timeout | undefined;
-    if (timeoutMs > 0) {
-      timer = setTimeout(() => {
-        child.kill('SIGTERM');
-        // Hard-kill if it doesn't exit promptly.
-        setTimeout(() => { if (!child.killed) child.kill('SIGKILL'); }, 2000);
-      }, timeoutMs);
-    }
-
-    const tokenListener = opts.token?.onCancellationRequested(() => {
+    // SIGTERM → SIGKILL → abandon. The final stage rejects the promise even
+    // if the OS never reaps the process, which is what reclaims the
+    // semaphore slot when dv wedges.
+    const terminate = (reason: string): void => {
       child.kill('SIGTERM');
-      setTimeout(() => { if (!child.killed) child.kill('SIGKILL'); }, 1000);
-    });
+      killTimer = setTimeout(() => { if (!exited) child.kill('SIGKILL'); }, TERM_GRACE_MS);
+      watchdog = setTimeout(() => {
+        if (exited || settled) return;
+        settled = true;
+        cleanup();
+        reject(new Error(`dv ${args.join(' ')} ${reason} and did not exit; abandoning process`));
+      }, TERM_GRACE_MS + KILL_GRACE_MS);
+    };
+
+    if (timeoutMs > 0) {
+      timer = setTimeout(() => terminate(`timed out after ${timeoutMs}ms`), timeoutMs);
+    }
+    tokenListener = opts.token?.onCancellationRequested(() => terminate('was cancelled'));
 
     child.on('error', (err) => {
-      if (timer) clearTimeout(timer);
-      tokenListener?.dispose();
+      exited = true;
+      if (settled) return;
+      settled = true;
+      cleanup();
       const errno = err as NodeJS.ErrnoException;
       if (errno.code === 'ENOENT' && onDvMissingHandler) {
         try { onDvMissingHandler({ dvPath, cause: errno }); }
@@ -150,8 +244,10 @@ function spawnDv(args: readonly string[], opts: DvRunOptions): Promise<DvResult>
     });
 
     child.on('close', (code, signal) => {
-      if (timer) clearTimeout(timer);
-      tokenListener?.dispose();
+      exited = true;
+      if (settled) return;
+      settled = true;
+      cleanup();
       resolve({
         stdout: Buffer.concat(stdoutChunks).toString('utf8'),
         stderr: Buffer.concat(stderrChunks).toString('utf8'),

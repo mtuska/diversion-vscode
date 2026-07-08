@@ -14,6 +14,10 @@ export const DV_COMMIT_SCHEME = 'dv-commit';
 
 /** Cap for the on-disk cache directory. Older entries are evicted by mtime. */
 const DISK_CACHE_BYTE_LIMIT = 50 * 1024 * 1024;
+/** Max in-memory cached documents (LRU). Bounds session heap growth. */
+const MEM_CACHE_CAP = 256;
+/** Run an opportunistic disk-cap sweep once every this many writes. */
+const EVICT_EVERY_WRITES = 50;
 
 interface RepoLookup {
   rootForPath(fsPath: string): { root: string; dvPath: string | undefined } | undefined;
@@ -61,6 +65,10 @@ export class CommitContentProvider implements vscode.TextDocumentContentProvider
   readonly onDidChange = this._onDidChange.event;
 
   private readonly memCache = new Map<string, Promise<string>>();
+  /** fsPath → set of memCache keys for that file, for O(1) invalidation
+   *  instead of scanning + Uri.parse-ing every key on each FS event. */
+  private readonly byPath = new Map<string, Set<string>>();
+  private writesSinceEvict = 0;
   private cacheDir: string | undefined;
   /** Set once we know dv's version (from the daemon health check). */
   private dvVersionSegment: string | undefined;
@@ -79,18 +87,39 @@ export class CommitContentProvider implements vscode.TextDocumentContentProvider
   }
 
   invalidate(absFsPath: string): void {
-    for (const key of [...this.memCache.keys()]) {
-      const u = vscode.Uri.parse(key);
-      if (u.path === absFsPath) {
-        this.memCache.delete(key);
-        this._onDidChange.fire(u);
-      }
+    const keys = this.byPath.get(absFsPath);
+    if (!keys) return;
+    for (const key of keys) {
+      this.memCache.delete(key);
+      this._onDidChange.fire(vscode.Uri.parse(key));
     }
+    this.byPath.delete(absFsPath);
   }
 
   invalidateAll(): void {
     for (const key of this.memCache.keys()) this._onDidChange.fire(vscode.Uri.parse(key));
     this.memCache.clear();
+    this.byPath.clear();
+  }
+
+  /** Insert into the LRU, index it by file path, and evict the oldest over cap. */
+  private remember(uri: vscode.Uri, key: string, entry: Promise<string>): void {
+    this.memCache.set(key, entry);
+    let set = this.byPath.get(uri.path);
+    if (!set) { set = new Set(); this.byPath.set(uri.path, set); }
+    set.add(key);
+    while (this.memCache.size > MEM_CACHE_CAP) {
+      const oldest = this.memCache.keys().next().value as string | undefined;
+      if (oldest === undefined) break;
+      this.forget(oldest);
+    }
+  }
+
+  private forget(key: string): void {
+    this.memCache.delete(key);
+    const p = vscode.Uri.parse(key).path;
+    const set = this.byPath.get(p);
+    if (set) { set.delete(key); if (set.size === 0) this.byPath.delete(p); }
   }
 
   /**
@@ -123,14 +152,18 @@ export class CommitContentProvider implements vscode.TextDocumentContentProvider
 
   async provideTextDocumentContent(uri: vscode.Uri): Promise<string> {
     const key = uri.toString();
-    let entry = this.memCache.get(key);
-    if (!entry) {
-      entry = this.compute(uri).catch((err) => {
-        this.logger.warn(`[dv-commit] resolve failed for ${uri.toString()}: ${(err as Error).message}`);
-        return '';
-      });
-      this.memCache.set(key, entry);
+    const existing = this.memCache.get(key);
+    if (existing) {
+      // LRU touch: move to the most-recent position.
+      this.memCache.delete(key);
+      this.memCache.set(key, existing);
+      return existing;
     }
+    const entry = this.compute(uri).catch((err) => {
+      this.logger.warn(`[dv-commit] resolve failed for ${uri.toString()}: ${(err as Error).message}`);
+      return '';
+    });
+    this.remember(uri, key, entry);
     return entry;
   }
 
@@ -246,6 +279,12 @@ export class CommitContentProvider implements vscode.TextDocumentContentProvider
     try {
       await fs.writeFile(file + '.tmp', content);
       await fs.rename(file + '.tmp', file);
+      // Sweep the disk cap periodically rather than only at activation, so a
+      // long session browsing large commits can't grow the dir past the cap.
+      if (++this.writesSinceEvict >= EVICT_EVERY_WRITES) {
+        this.writesSinceEvict = 0;
+        void this.evictIfOverCap();
+      }
     } catch (err) {
       this.logger.debug(`[dv-commit] cache write failed: ${(err as Error).message}`);
     }
@@ -284,5 +323,6 @@ export class CommitContentProvider implements vscode.TextDocumentContentProvider
   dispose(): void {
     this._onDidChange.dispose();
     this.memCache.clear();
+    this.byPath.clear();
   }
 }

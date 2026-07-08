@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { Semaphore } from '../util/semaphore.js';
 import type { DaemonClient } from './daemon.js';
 import type { LoggerLike } from '../util/logCore.js';
 
@@ -28,6 +29,40 @@ const DEFAULT_BASE_URL = 'https://api.diversion.dev/v0';
 const DEFAULT_TIMEOUT_MS = 20_000;
 /** Refresh the cached token this many ms before it actually expires. */
 const TOKEN_SKEW_MS = 60_000;
+/**
+ * Max concurrent CoreAPI requests per client. Callers like
+ * `overlappingCommits` fan out one request per commit; without a cap a single
+ * call could open ~1000 sockets at once. This is separate from the dv-process
+ * semaphore in cli.ts (which does not govern HTTP).
+ */
+const CORE_CONCURRENCY = 6;
+/** Bounded caches for immutable-by-id reads (commit-by-id, compare-by-pair). */
+const COMMIT_CACHE_CAP = 512;
+const COMPARE_CACHE_CAP = 256;
+
+/**
+ * Insertion-ordered cache with a hard cap. `get` refreshes recency (LRU); on
+ * overflow the oldest entry is evicted. Stores promises so identical in-flight
+ * requests coalesce into one network call.
+ */
+class BoundedCache<V> {
+  private readonly map = new Map<string, V>();
+  constructor(private readonly cap: number) {}
+  get(key: string): V | undefined {
+    const v = this.map.get(key);
+    if (v !== undefined) { this.map.delete(key); this.map.set(key, v); }
+    return v;
+  }
+  set(key: string, value: V): void {
+    if (this.map.has(key)) this.map.delete(key);
+    this.map.set(key, value);
+    if (this.map.size > this.cap) {
+      const oldest = this.map.keys().next().value as string | undefined;
+      if (oldest !== undefined) this.map.delete(oldest);
+    }
+  }
+  delete(key: string): void { this.map.delete(key); }
+}
 
 export interface CoreApiClientOptions {
   /** Override the CoreAPI base URL (defaults to the production endpoint). */
@@ -56,17 +91,52 @@ export class CoreApiError extends Error {
  * branches, log, compare, shelves, repos). The token is a write-capable
  * credential — it is never logged or persisted.
  */
+/**
+ * Validate the configured CoreAPI base URL before we ever attach a
+ * write-capable bearer token to a request. A hijacked `diversion.coreApiUrl`
+ * (or `DIVERSION_CORE_API_URL`) pointing at an attacker host would otherwise
+ * exfiltrate the token on the first call. We fail *safe*: on a cleartext
+ * remote URL or an unparseable value we log and fall back to production
+ * rather than honoring the dangerous override. Plain `http://` is permitted
+ * only for loopback (local test daemons). The effective URL is logged so an
+ * unexpected override is visible in the output channel.
+ */
+export function sanitizeBaseUrl(configured: string | undefined, logger: LoggerLike): string {
+  const raw = (configured?.trim() || DEFAULT_BASE_URL).replace(/\/+$/, '');
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    logger.warn(`CoreAPI: ignoring unparseable coreApiUrl "${raw}", using ${DEFAULT_BASE_URL}`);
+    return DEFAULT_BASE_URL;
+  }
+  const isLoopback = url.hostname === '127.0.0.1' || url.hostname === '::1' || url.hostname === 'localhost';
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && isLoopback)) {
+    logger.warn(
+      `CoreAPI: refusing cleartext/non-https endpoint "${raw}" for a bearer token; ` +
+      `using ${DEFAULT_BASE_URL}`,
+    );
+    return DEFAULT_BASE_URL;
+  }
+  if (raw !== DEFAULT_BASE_URL) logger.info(`CoreAPI base URL overridden: ${raw}`);
+  return raw;
+}
+
 export class CoreApiClient {
   private readonly baseUrl: string;
   private readonly timeoutMs: number;
   private token: CoreToken | undefined;
+  private tokenInFlight: Promise<CoreToken> | undefined;
+  private readonly limiter = new Semaphore(CORE_CONCURRENCY);
+  private readonly commitCache = new BoundedCache<Promise<CoreCommit | undefined>>(COMMIT_CACHE_CAP);
+  private readonly compareCache = new BoundedCache<Promise<FileChange[]>>(COMPARE_CACHE_CAP);
 
   constructor(
     private readonly daemon: DaemonClient,
     private readonly logger: LoggerLike,
     opts: CoreApiClientOptions = {},
   ) {
-    this.baseUrl = (opts.baseUrl?.trim() || DEFAULT_BASE_URL).replace(/\/+$/, '');
+    this.baseUrl = sanitizeBaseUrl(opts.baseUrl, logger);
     this.timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
 
@@ -78,6 +148,18 @@ export class CoreApiClient {
    * single commit — the replacement for `dv show --name-status`.
    */
   async compare(repoId: string, baseId: string, otherId: string): Promise<FileChange[]> {
+    // A comparison between two fixed commit IDs is immutable — cache it (and
+    // coalesce identical in-flight requests). Skip the cache when either side
+    // is a mutable ref (empty = empty tree, or a branch/workspace name).
+    const key = `${repoId}\t${baseId}\t${otherId}`;
+    const cacheable = isCommitId(baseId) || baseId === '';
+    if (cacheable && isCommitId(otherId)) {
+      return this.cached(this.compareCache, key, () => this.compareUncached(repoId, baseId, otherId));
+    }
+    return this.compareUncached(repoId, baseId, otherId);
+  }
+
+  private async compareUncached(repoId: string, baseId: string, otherId: string): Promise<FileChange[]> {
     const res = await this.get<CoreComparisonResponse>(
       `/repos/${enc(repoId)}/compare?base_id=${enc(baseId)}&other_id=${enc(otherId)}`,
     );
@@ -144,11 +226,28 @@ export class CoreApiClient {
     return raw ? mapCommit(raw) : undefined;
   }
 
-  private async getCommitRaw(repoId: string, commitId: string): Promise<CoreCommit | undefined> {
+  private getCommitRaw(repoId: string, commitId: string): Promise<CoreCommit | undefined> {
+    // A commit fetched by its own ID is immutable — cache + coalesce so the
+    // getCommit/commitChanges pair and repeated graph clicks don't re-fetch.
+    if (!isCommitId(commitId)) return this.getCommitRawUncached(repoId, commitId);
+    return this.cached(this.commitCache, `${repoId}\t${commitId}`,
+      () => this.getCommitRawUncached(repoId, commitId));
+  }
+
+  private async getCommitRawUncached(repoId: string, commitId: string): Promise<CoreCommit | undefined> {
     const res = await this.get<CoreListEnvelope<CoreCommit>>(
       `/repos/${enc(repoId)}/commits?${new URLSearchParams({ ref_ids: commitId, limit: '1' }).toString()}`,
     );
     return (res.items ?? []).find((c) => c.commit_id === commitId) ?? (res.items ?? [])[0];
+  }
+
+  /** Coalesce identical in-flight requests and cache immutable results. */
+  private cached<T>(cache: BoundedCache<Promise<T>>, key: string, fn: () => Promise<T>): Promise<T> {
+    const existing = cache.get(key);
+    if (existing) return existing;
+    const p = fn().catch((err) => { cache.delete(key); throw err; });
+    cache.set(key, p);
+    return p;
   }
 
   /**
@@ -252,7 +351,12 @@ export class CoreApiClient {
     if (this.token && this.token.ExpiresAt * 1000 - TOKEN_SKEW_MS > now) {
       return this.token.AccessToken;
     }
-    this.token = await this.daemon.coreToken();
+    // Single-flight: N concurrent requests at expiry share one mint instead
+    // of stampeding the local agent.
+    if (!this.tokenInFlight) {
+      this.tokenInFlight = this.daemon.coreToken().finally(() => { this.tokenInFlight = undefined; });
+    }
+    this.token = await this.tokenInFlight;
     return this.token.AccessToken;
   }
 
@@ -276,7 +380,13 @@ export class CoreApiClient {
     }
   }
 
-  private async attempt<T>(pathname: string): Promise<T> {
+  private attempt<T>(pathname: string): Promise<T> {
+    // Bound concurrent requests so a fan-out (e.g. overlappingCommits) can't
+    // open hundreds of sockets at once.
+    return this.limiter.run(() => this.attemptOnce<T>(pathname));
+  }
+
+  private async attemptOnce<T>(pathname: string): Promise<T> {
     const token = await this.bearer();
     const url = this.baseUrl + pathname;
     const ctrl = new AbortController();
@@ -358,6 +468,15 @@ function delay(ms: number): Promise<void> {
 
 function enc(s: string): string {
   return encodeURIComponent(s);
+}
+
+/**
+ * True for a concrete, immutable Diversion commit ID (`dv.commit.<n>`). Branch
+ * names, workspace refs, and the empty-tree sentinel are mutable / special and
+ * must not be cached as if fixed.
+ */
+function isCommitId(id: string): boolean {
+  return /^dv\.commit\./.test(id);
 }
 
 /** Encode a repo-relative path for a URL while keeping `/` separators. */

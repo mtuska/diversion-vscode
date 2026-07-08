@@ -195,7 +195,11 @@ async function identityFromFilesystem(root: string): Promise<RepoIdentity | unde
   }
   return {
     workspaceId: parsed.WorkspaceID ?? wsId,
-    workspacePath: parsed.Path ?? root,
+    // Use the on-disk location we actually found `.diversion` in, NOT the
+    // `Path` field from the marker file — that file can be committed into a
+    // repo, so trusting it would let a cloned repo point the SCM provider,
+    // conflict walks, and discard flows at an arbitrary directory.
+    workspacePath: root,
     repoId: parsed.RepoID ?? '',
     repoName: parsed.RepoName ?? path.basename(root),
     branchId: parsed.BranchID ?? '',

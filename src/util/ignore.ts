@@ -37,20 +37,51 @@ export class IgnoreManager {
    */
   private readonly ignoredDirs = new Set<string>();
   private repoRoot: string | undefined;
+  private loadInFlight: Promise<void> | undefined;
+  private loadQueued = false;
 
   constructor(private readonly logger: Logger) {}
 
-  /** (Re)load all ignore files under the given repo root. */
+  /**
+   * (Re)load all ignore files under the given repo root. Single-flight: two
+   * rapid ignore-file saves must not run two scans that concurrently clear
+   * and repopulate the shared maps (which corrupts the matcher state). A
+   * queued rerun after the in-flight load picks up the latest on-disk state.
+   */
   async load(repoRoot: string): Promise<void> {
     this.repoRoot = repoRoot;
+    if (this.loadInFlight) {
+      this.loadQueued = true;
+      return this.loadInFlight;
+    }
+    this.loadInFlight = this.doLoad().finally(() => {
+      this.loadInFlight = undefined;
+      if (this.loadQueued) {
+        this.loadQueued = false;
+        if (this.repoRoot) void this.load(this.repoRoot);
+      }
+    });
+    return this.loadInFlight;
+  }
+
+  private async doLoad(): Promise<void> {
+    const repoRoot = this.repoRoot!;
     this.matchers.clear();
     this.ignoredDirs.clear();
     const t0 = Date.now();
     let dirsScanned = 0;
+    let hitCap = false;
     await this.scanDir(repoRoot, () => {
       dirsScanned++;
-      return dirsScanned < MAX_DIRS;
+      if (dirsScanned >= MAX_DIRS) { hitCap = true; return false; }
+      return true;
     });
+    if (hitCap) {
+      this.logger.warn(
+        `[ignore] scan hit the ${MAX_DIRS}-directory cap under ${repoRoot}; ` +
+        `ignore files below that point were not read and those files won't gray out`,
+      );
+    }
     this.logger.info(
       `[ignore] loaded ${this.matchers.size} ignore file(s) ` +
       `from ${dirsScanned} dir(s) under ${repoRoot} ` +

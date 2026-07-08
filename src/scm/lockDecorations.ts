@@ -30,13 +30,21 @@ export class LockDecorationProvider implements vscode.FileDecorationProvider, vs
     private readonly logger: Logger,
   ) {}
 
-  /** Force-refresh the lock cache for every repo. */
+  /**
+   * Force-refresh the lock cache for every repo. Called after lock/unlock
+   * commands — bypasses the TTL so the change shows immediately. `doRefresh`
+   * fires a precise per-URI delta; we deliberately do NOT fire `undefined`
+   * (invalidate-all), which would make VS Code re-query decorations for every
+   * visible file.
+   */
   async refresh(): Promise<void> {
-    for (const repo of this.repos()) {
-      repo.invalidateLockCache();
-      await this.ensureFresh(repo);
-    }
-    this._onDidChange.fire(undefined);
+    await Promise.all(
+      [...this.repos()].map((repo) => {
+        repo.invalidateLockCache();
+        this.lastRefresh.delete(repo.root); // defeat the TTL guard in ensureFresh
+        return this.ensureFresh(repo);
+      }),
+    );
   }
 
   provideFileDecoration(uri: vscode.Uri): vscode.ProviderResult<vscode.FileDecoration> {

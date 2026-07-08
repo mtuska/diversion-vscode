@@ -32,6 +32,21 @@
     "workspaceContains:**/.diversion",
     "onStartupFinished"
   ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Diversion runs the `dv` binary and sends a write-capable auth token to the configured CoreAPI endpoint. In untrusted workspaces the binary path and service URLs cannot be overridden by workspace settings.",
+      "restrictedConfigurations": [
+        "diversion.path",
+        "diversion.daemonUrl",
+        "diversion.coreApiUrl"
+      ]
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "Diversion requires a real filesystem and the local sync agent."
+    }
+  },
   "contributes": {
     "commands": [
       {
@@ -304,16 +319,19 @@
         "diversion.path": {
           "type": "string",
           "default": "",
+          "scope": "machine",
           "description": "Path to the `dv` binary. Empty uses the system PATH lookup."
         },
         "diversion.daemonUrl": {
           "type": "string",
           "default": "",
+          "scope": "machine",
           "description": "Override the Diversion daemon URL (e.g. http://127.0.0.1:38825). Empty discovers via ~/.diversion/.port."
         },
         "diversion.coreApiUrl": {
           "type": "string",
           "default": "",
+          "scope": "machine",
           "description": "Override the Diversion CoreAPI base URL used for status, branches, log, and shelves. Empty uses the production endpoint (https://api.diversion.dev/v0)."
         },
         "diversion.refresh.debounceMs": {

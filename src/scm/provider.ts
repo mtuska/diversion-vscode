@@ -10,6 +10,16 @@ import { isInsideOrEqual } from '../util/path.js';
 const PROVIDER_ID = 'diversion';
 
 /**
+ * Upper bound on resource states rendered per group. Building a
+ * `SourceControlResourceState` (with its per-item command + arguments) for
+ * 100k+ changed files, and handing them all to the SCM view to render and
+ * diff, freezes the extension host. We render the first N, keep the *true*
+ * total in `sc.count` and the group label, and stop allocating past the cap.
+ * (git's built-in SCM applies a similar guard.)
+ */
+const MAX_VISIBLE_RESOURCES = 5_000;
+
+/**
  * SCM provider for one Diversion workspace. Owns a `vscode.SourceControl`,
  * its resource groups, and the refresh lifecycle.
  */
@@ -44,14 +54,21 @@ export class DiversionScmProvider implements vscode.Disposable {
   private refreshTimer: NodeJS.Timeout | undefined;
   private inFlight: Promise<void> | undefined;
   private pendingRefresh = false;
+  /** Signature of the last rendered state; lets an identical refresh no-op. */
+  private lastSignature: string | undefined;
+
+  /** QuickDiff base-content provider, retained so we can invalidate its cache
+   *  when HEAD moves (its base content is only stale after a commit/checkout). */
+  private readonly quickDiff?: { invalidateAll?(): void };
 
   constructor(
     readonly repo: Repo,
     private readonly logger: Logger,
     private readonly storage: vscode.Memento,
-    quickDiffProvider?: vscode.QuickDiffProvider,
+    quickDiffProvider?: vscode.QuickDiffProvider & { invalidateAll?(): void },
     private readonly changeDecorations?: ChangeDecorationsProvider,
   ) {
+    this.quickDiff = quickDiffProvider;
     this.storageKey = `diversion.staged.${repo.info.workspaceId}`;
     const persisted = this.storage.get<string[]>(this.storageKey, []);
     for (const p of persisted) this.stagedPaths.add(p);
@@ -178,11 +195,24 @@ export class DiversionScmProvider implements vscode.Disposable {
       }
       if (stagingChanged) this.persistStaged();
 
+      // Bail out early if nothing that affects the rendered view changed —
+      // during a sustained sync/build, `dv status` is re-run repeatedly and
+      // often returns an identical result. Skipping the rebuild avoids
+      // reallocating thousands of resource states and re-firing a
+      // whole-repo decoration event for no visible change.
+      const signature = this.computeSignature(state);
+      if (signature === this.lastSignature) {
+        this.logger.debug('[scm] refresh: state unchanged, skipping rebuild');
+        return;
+      }
+
       const staged: vscode.SourceControlResourceState[] = [];
       const changes: vscode.SourceControlResourceState[] = [];
       const decorationStates = new Map<string, ChangeKind>();
 
       let hidden = 0;
+      let stagedTotal = 0;
+      let changesTotal = 0;
       for (const change of state.changes) {
         // Decorations are populated for *every* changed file in the
         // repo, regardless of which workspace folders are open. The
@@ -192,11 +222,18 @@ export class DiversionScmProvider implements vscode.Disposable {
         decorationStates.set(path.join(this.repo.root, change.path), change.kind);
         if (!this.isPathVisible(change.path)) { hidden++; continue; }
         const isStaged = this.stagedPaths.has(change.path);
-        const rstate = toResourceState(this.repo.root, change, isStaged);
         if (isStaged) {
-          staged.push(rstate);
+          stagedTotal++;
+          // Only build the (relatively expensive) resource state up to the
+          // cap; totals above are still counted for the badge + label.
+          if (staged.length < MAX_VISIBLE_RESOURCES) {
+            staged.push(toResourceState(this.repo.root, change, true));
+          }
         } else {
-          changes.push(rstate);
+          changesTotal++;
+          if (changes.length < MAX_VISIBLE_RESOURCES) {
+            changes.push(toResourceState(this.repo.root, change, false));
+          }
         }
       }
 
@@ -219,9 +256,11 @@ export class DiversionScmProvider implements vscode.Disposable {
       this.groupConflicts.resourceStates = conflicts;
       this.groupStaged.resourceStates = staged;
       this.groupChanges.resourceStates = changes;
-      this.sc.count = conflicts.length + staged.length + changes.length;
+      this.groupStaged.label = labelWithCap('Staged Changes', stagedTotal, staged.length);
+      this.groupChanges.label = labelWithCap('Changes', changesTotal, changes.length);
+      this.sc.count = conflicts.length + stagedTotal + changesTotal;
       this.updateTitleButtons();
-      this.updateActionButton(staged.length + changes.length);
+      this.updateActionButton(stagedTotal + changesTotal);
       this.history?.notifyCurrentChanged();
       // If the branch tip moved (commit, checkout, merge, etc.) tell
       // VS Code's graph view to re-query — `notifyCurrentChanged` only
@@ -231,17 +270,47 @@ export class DiversionScmProvider implements vscode.Disposable {
       if (moved) {
         const currentRef = this.history?.currentHistoryItemRef;
         this.history?.notifyRefsChanged(currentRef ? { modified: [currentRef] } : {});
+        // Base (last-committed) content changed under every open editor —
+        // re-fetch QuickDiff gutters (previously left stale until reopen).
+        this.quickDiff?.invalidateAll?.();
       }
       this.changeDecorations?.setRepoState(this.repo.root, decorationStates);
+      this.lastSignature = signature;
       const filterNote = this.openFolders.length > 0 && hidden > 0
         ? ` (${hidden} hidden by open-folder filter: ${this.openFolders.join(', ')})`
         : '';
+      const capNote = changesTotal > changes.length || stagedTotal > staged.length
+        ? ` (capped: showing ${changes.length}/${changesTotal} changes, ${staged.length}/${stagedTotal} staged)`
+        : '';
       this.logger.debug(
-        `[scm] refresh: ${conflicts.length} conflicts + ${staged.length} staged + ${changes.length} changes${filterNote}`,
+        `[scm] refresh: ${conflicts.length} conflicts + ${stagedTotal} staged + ${changesTotal} changes${filterNote}${capNote}`,
       );
     } catch (err) {
       this.logger.error(`[scm] refresh failed for ${this.repo.root}`, err);
     }
+  }
+
+  /**
+   * A cheap deterministic fingerprint of everything that affects the rendered
+   * SCM view: the ordered change list, the conflict set, which paths are
+   * staged, the open-folder filter, and the current tip. Two refreshes with
+   * the same signature render identically, so the second can be skipped.
+   */
+  private computeSignature(state: {
+    changes: readonly FileChange[];
+    conflicts: readonly { originalPath: string }[];
+  }): string {
+    const parts: string[] = [
+      `h:${this.repo.info.commitId}`,
+      `b:${this.repo.info.branchName}`,
+      `f:${this.openFolders.join(',')}`,
+      `s:${[...this.stagedPaths].sort().join(',')}`,
+    ];
+    for (const c of state.changes) {
+      parts.push(`${c.kind}\t${c.path}\t${c.fromPath ?? ''}`);
+    }
+    for (const c of state.conflicts) parts.push(`x\t${c.originalPath}`);
+    return parts.join('\n');
   }
 
   // ───── staging API ─────
@@ -425,6 +494,14 @@ export class DiversionScmProvider implements vscode.Disposable {
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
     for (const d of this.disposables) d.dispose();
   }
+}
+
+/**
+ * Group label that honestly reflects a capped render: `Changes` normally,
+ * `Changes (5000 of 128340)` when the rendered list was truncated.
+ */
+function labelWithCap(base: string, total: number, shown: number): string {
+  return total > shown ? `${base} (${shown} of ${total})` : base;
 }
 
 function toResourceState(

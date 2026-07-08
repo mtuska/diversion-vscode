@@ -12,10 +12,22 @@ interface RepoLookup {
  * active editor gets a faint right-aligned annotation showing the commit
  * author and date pulled from `dv annotate`. Re-renders on editor change.
  */
+/** Max distinct documents whose blame we keep cached (bounds heap). */
+const BLAME_CACHE_CAP = 64;
+
 export class Blame implements vscode.Disposable {
   private enabled = false;
   private readonly decoration: vscode.TextEditorDecorationType;
   private readonly disposables: vscode.Disposable[] = [];
+  /** Computed decorations keyed by document URI, valid for one doc version. */
+  private readonly cache = new Map<string, { version: number; decorations: vscode.DecorationOptions[] }>();
+  /** Monotonic run counter + the latest run per document, so a slow annotate
+   *  that resolves after a newer one (save → switch away → back) is dropped
+   *  instead of painting stale blame over fresh. */
+  private seq = 0;
+  private readonly latestSeq = new Map<string, number>();
+  /** Per-document cancellation, so rapid tab-cycling cancels superseded spawns. */
+  private readonly inFlight = new Map<string, vscode.CancellationTokenSource>();
 
   constructor(
     private readonly lookup: RepoLookup,
@@ -59,6 +71,23 @@ export class Blame implements vscode.Disposable {
   private async applyTo(editor: vscode.TextEditor): Promise<void> {
     const uri = editor.document.uri;
     if (uri.scheme !== 'file') return;
+    const key = uri.toString();
+    const version = editor.document.version;
+
+    // Serve a cached blame for this exact document version without spawning.
+    const cached = this.cache.get(key);
+    if (cached && cached.version === version) {
+      editor.setDecorations(this.decoration, cached.decorations);
+      return;
+    }
+
+    const mySeq = ++this.seq;
+    this.latestSeq.set(key, mySeq);
+    // Cancel any older in-flight annotate for this document.
+    this.inFlight.get(key)?.cancel();
+    const cts = new vscode.CancellationTokenSource();
+    this.inFlight.set(key, cts);
+
     const match = this.lookup.forUri(uri);
     if (!match) {
       editor.setDecorations(this.decoration, []);
@@ -67,12 +96,19 @@ export class Blame implements vscode.Disposable {
     const rel = path.relative(match.root, uri.fsPath);
     let annotations;
     try {
-      annotations = await match.repo.annotate(rel);
+      annotations = await match.repo.annotate(rel, cts.token);
     } catch (err) {
-      this.logger.warn(`[blame] annotate failed for ${rel}: ${(err as Error).message}`);
-      editor.setDecorations(this.decoration, []);
+      if (this.latestSeq.get(key) === mySeq) {
+        this.logger.warn(`[blame] annotate failed for ${rel}: ${(err as Error).message}`);
+        editor.setDecorations(this.decoration, []);
+      }
       return;
+    } finally {
+      if (this.inFlight.get(key) === cts) this.inFlight.delete(key);
+      cts.dispose();
     }
+    // A newer run for this document superseded us — drop this stale result.
+    if (this.latestSeq.get(key) !== mySeq) return;
     // Render the metadata at the END of each contiguous same-commit block
     // (matches GitLens / git-blame conventions). All other lines in the
     // block keep just the hover tooltip.
@@ -97,6 +133,13 @@ export class Blame implements vscode.Disposable {
       }
       decorations.push(decoration);
     }
+    // Cache for this document version, bounding the map size.
+    this.cache.set(key, { version, decorations });
+    if (this.cache.size > BLAME_CACHE_CAP) {
+      const oldest = this.cache.keys().next().value as string | undefined;
+      if (oldest !== undefined) this.cache.delete(oldest);
+    }
+
     // Make sure we apply to the same editor that's still active.
     const stillActive = vscode.window.activeTextEditor;
     if (stillActive && stillActive.document === editor.document) {
@@ -105,6 +148,9 @@ export class Blame implements vscode.Disposable {
   }
 
   dispose(): void {
+    for (const cts of this.inFlight.values()) cts.cancel();
+    this.inFlight.clear();
+    this.cache.clear();
     for (const d of this.disposables) d.dispose();
   }
 }
