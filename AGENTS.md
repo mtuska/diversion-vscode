@@ -55,9 +55,16 @@ src/
                         (CommitDetails, BranchInfo…), AgentAPI + CoreAPI shapes.
     parsers/            Text parsers for the few `dv` outputs with no API:
                         lock (locks), annotate (blame), tag (already JSON),
-                        unifiedDiff (display renderer). Unit-tested under
-                        test/unit/parsers/.
+                        unifiedDiff (display renderer), log (only for
+                        `--show-squashed`, which the CoreAPI can't do).
+                        Unit-tested under test/unit/parsers/.
     conflicts.ts        Detection of `*.dv-conflict*` sidecar files.
+    mergeMarkers.ts     Line-diff two versions into conflict markers, so
+                        VS Code's built-in Merge Conflict extension can
+                        drive per-block resolution. Used by both conflict
+                        flavours (sync sidecars and CoreAPI merges).
+    discoverDv.ts       Probe well-known install locations when `dv` isn't
+                        on PATH (Homebrew cask, app bundle, ~/.diversion).
     reverseApply.ts     Discard helpers.
   scm/
     provider.ts         DiversionScmProvider — implements vscode.SourceControl.
@@ -76,6 +83,10 @@ src/
                         `dv diff --base` per file, cached).
     blame.ts            Line-blame from `dv annotate`.
     shelvesView.ts      TreeView for `dv shelf`.
+    mergeConflicts.ts   Per-block resolution of server-side merge conflicts:
+                        materialises each conflicting path as a marker-
+                        annotated scratch file under globalStorageUri,
+                        POSTs the result, finalizes.
   ui/
     statusBar.ts        Branch + sync indicator. Self-polls /sync/progress
                         while syncing.
@@ -92,6 +103,8 @@ src/
     semaphore.ts        Caps concurrent dv processes (configurable).
     path.ts             pathEquals + isInsideOrEqual that handle
                         case-insensitivity / symlink-canonicalised home dirs.
+    dates.ts            Locale-aware date rendering for UI surfaces. Tool
+                        output stays ISO on purpose.
     walk.ts, log.ts, binary.ts
 test/unit/              Vitest. Parser-heavy.
 unreal_plugin/          (Gitignored) Reference copy of Diversion's Unreal
@@ -165,10 +178,17 @@ the user's credentials ourselves, and the token stays in memory only.
 > a registered client." That is obsolete: the agent mints us a token, so
 > no client registration is involved. Don't re-litigate it.
 
-**`dv` CLI** (`cli.ts`) for **every write** — commit, reset, revert,
-merge, checkout, branch/tag/shelf mutation, locks — plus the handful of
-reads with no CoreAPI equivalent (locks, blame). Writes stay on the CLI
-so the local agent keeps sync state authoritative.
+**`dv` CLI** (`cli.ts`) for **almost every write** — commit, reset,
+revert, merge, checkout, branch/tag/shelf mutation, locks, prune — plus
+the reads with no CoreAPI equivalent (locks, blame, and
+`log --show-squashed`). Writes stay on the CLI so the local agent keeps
+sync state authoritative.
+
+The **one** CoreAPI write is merge-conflict resolution
+(`setConflictResult` / `finalizeMerge`), because dv exposes no
+per-conflict command — there is no CLI route to take. It calls
+`notifySyncRequired` afterwards so the merged result comes down. Don't
+add a second CoreAPI write without the same justification.
 
 Two hard rules that survive all of the above:
 
@@ -314,6 +334,14 @@ Both must declare the same name. Tools are read-only by convention.
   is now localized, and if the CLI follows, `looksLikeError` silently
   returning false would turn failures into successes. Prefer `--json`
   where dv offers it.
+- **Two kinds of conflicts, two mechanisms.** `.dv-conflict` sidecars are
+  *sync* conflicts and live on disk; both versions are local, so
+  `mergeMarkers.ts` diffs them into conflict markers in place. *Merge*
+  conflicts are parked server-side with no filesystem presence — each
+  side is a CoreAPI blob, materialised into a scratch file under
+  globalStorageUri. Don't conflate them; `dv merge` exits 0 either way,
+  so `listOpenMerges` is the only way to tell a clean merge from a
+  parked one.
 - **`dv --help` does not list every command.** `verify`, `ls`, `mv`, `rm`,
   `mkdir`, `review`, and `version` are all real but hidden. Check
   `dv help <cmd>` before concluding something doesn't exist.
