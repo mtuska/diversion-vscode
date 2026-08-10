@@ -51,7 +51,9 @@ Internalize these before running any command. Most Diversion mistakes come from 
 
 4. **Shelves replace `git stash`.** Use `dv shelf create <name>` to set work aside, `dv shelf apply <name>` to bring it back. Shelves are not tied to a branch — you can shelf on one branch and apply on another.
 
-5. **There are two kinds of conflicts and they're handled differently.** *Merge conflicts* (during `dv merge`) are held in the cloud and resolved through the desktop app, not via inline conflict markers in the working tree. *Sync conflicts* (when auto-update brings in a teammate's commit that overlaps your uncommitted changes) are handled by writing your local version to a `.dv-conflict` sidecar file and overwriting the original with the incoming version. The sync-conflict resolution recipe is below; for merge conflicts, point the user at `dv view` (web UI) or the desktop app.
+5. **There are two kinds of conflicts and they're handled differently.** *Merge conflicts* (during `dv merge`) are held in the cloud and resolved through the desktop app, not via inline conflict markers in the working tree. *Sync conflicts* (when auto-update brings in a teammate's commit that overlaps your uncommitted changes) are handled by writing your local version to a `.dv-conflict` sidecar file and overwriting the original with the incoming version. The sync-conflict resolution recipe is below; for merge conflicts, point the user at the desktop app (`dv view`), which resolves them one conflicting block at a time — keep current, keep incoming, or keep both.
+
+A conflicting `dv merge` **exits 0** and parks the merge server-side rather than failing, so a clean exit does not mean the branch moved. Run `dv merge -l` afterwards: it lists open merges, and an empty list is the only real confirmation the merge landed.
 
 ## Hard rules — do not do these
 
@@ -104,7 +106,7 @@ This is the working set. For full flags and less-common commands, see `reference
 | Discard *and* remove newly-added files | `dv reset --all --clean -f` |
 | Revert the changes of a past commit (creates a new commit) | `dv revert <commit_id>` |
 | Set workspace contents back to a past commit | `dv revert-to-commit <commit_id>` |
-| Restore a single file from a ref | `dv restore <ref> path/to/file` |
+| Restore a single file from a ref | `dv restore path/to/file --source <ref>` |
 | Cherry-pick a commit into the workspace | `dv cherry-pick <commit_id>` |
 | Shelve current changes | `dv shelf create <name>` |
 | List shelves | `dv shelf` |
@@ -240,7 +242,7 @@ The choice depends on how far back the mistake is.
 - **Wipe all uncommitted changes (incl. new files)** → `dv reset --all --clean -f`
 - **Most recent commit was wrong** → `dv revert <commit_id>` (makes a new commit that inverts it; safe in shared history)
 - **Want the workspace to *be* a past state, but not rewrite history** → `dv revert-to-commit <commit_id>`
-- **Just want one file back to how it was at some point** → `dv restore <ref> path/to/file`
+- **Just want one file back to how it was at some point** → `dv restore path/to/file --source <ref>`
 
 Do not look for `dv reset --hard <commit>` — Diversion's model is different. `dv revert` and `dv revert-to-commit` are the answers; both create new commits rather than rewriting history.
 
