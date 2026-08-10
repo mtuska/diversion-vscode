@@ -7,6 +7,7 @@ import { detectRepo, findDiversionRoot, findNestedDiversionRoots } from './diver
 import { Repo, MAX_COMMIT_MESSAGE_LEN } from './diversion/repo.js';
 import { readSettings } from './diversion/settings.js';
 import { setDvConcurrencyLimit, setOnDvMissing } from './diversion/cli.js';
+import { discoverDvBinary } from './diversion/discoverDv.js';
 import { DiversionScmProvider } from './scm/provider.js';
 import { QuickDiff, DV_SCHEME } from './scm/quickDiff.js';
 import { CommitContentProvider, DV_COMMIT_SCHEME } from './scm/commitContent.js';
@@ -69,15 +70,44 @@ let dvMissingNotified = false;
 function notifyDvMissing(attemptedPath: string): void {
   if (dvMissingNotified) return;
   dvMissingNotified = true;
+  void reportDvMissing(attemptedPath);
+}
+
+async function reportDvMissing(attemptedPath: string): Promise<void> {
   const configured = vscode.workspace.getConfiguration('diversion').get<string>('path', '').trim();
+  logger?.error(`[cli] dv binary not found (attempted: ${attemptedPath}).`);
+
+  // Before asking the user to go hunting, look where installers actually put
+  // it. A GUI-launched VS Code often has a minimal PATH, so "not on PATH" and
+  // "not installed" are very different problems with the same symptom.
+  const found = configured ? undefined : await discoverDvBinary();
+  if (found) {
+    logger?.info(`[cli] discovered a dv binary at ${found}`);
+    const pick = await vscode.window.showErrorMessage(
+      `Diversion: \`dv\` isn't on the extension host's PATH, but one was found at \`${found}\`. ` +
+      `VS Code launched from a desktop icon often has a smaller PATH than your shell.`,
+      'Use This Path', 'Set Path…', 'Show Output',
+    );
+    if (pick === 'Use This Path') {
+      await vscode.workspace.getConfiguration('diversion').update(
+        'path', found, vscode.ConfigurationTarget.Global,
+      );
+      for (const p of providers.values()) p.scheduleRefresh(0);
+      void vscode.window.showInformationMessage(`Diversion: now using ${found}.`);
+      return;
+    }
+    if (pick === 'Set Path…') void promptForDvPath();
+    else if (pick === 'Show Output') logger?.show();
+    return;
+  }
+
   const detail = configured
     ? `Configured \`diversion.path\` is \`${configured}\` but no executable was found there.`
-    : `\`dv\` is not on the extension host's PATH (tried \`${attemptedPath}\`). ` +
-      `This commonly happens when VS Code is launched from a desktop launcher whose PATH ` +
-      `doesn't include where \`dv\` lives (e.g. \`~/.local/bin\`, \`~/.diversion/bin\`).`;
-  const message = `Diversion: cannot find the \`dv\` CLI. SCM operations will fail until this is resolved.`;
+    : `\`dv\` is not on the extension host's PATH (tried \`${attemptedPath}\`), and it isn't in ` +
+      `any of the usual install locations. Install it with \`brew install --cask diversion-app\` ` +
+      `on macOS, or from https://docs.diversion.dev.`;
   void vscode.window.showErrorMessage(
-    `${message} ${detail}`,
+    `Diversion: cannot find the \`dv\` CLI. SCM operations will fail until this is resolved. ${detail}`,
     'Set Path…',
     'Open Settings',
     'Show Output',
@@ -87,7 +117,6 @@ function notifyDvMissing(attemptedPath: string): void {
       void vscode.commands.executeCommand('workbench.action.openSettings', 'diversion.path');
     } else if (pick === 'Show Output') logger?.show();
   });
-  logger?.error(`[cli] dv binary not found (attempted: ${attemptedPath}). User notified.`);
 }
 
 async function promptForDvPath(): Promise<void> {
