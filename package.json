@@ -131,6 +131,12 @@
         "category": "Diversion"
       },
       {
+        "command": "diversion.fileHistory",
+        "title": "File History (Across Merges)",
+        "category": "Diversion",
+        "icon": "$(history)"
+      },
+      {
         "command": "diversion.openInWeb",
         "title": "Open in Web UI",
         "category": "Diversion"
@@ -784,6 +790,11 @@
           "command": "diversion.unlockFile",
           "when": "diversion.hasRepo && resourceScheme == file && !explorerResourceIsFolder",
           "group": "7_modification@2"
+        },
+        {
+          "command": "diversion.fileHistory",
+          "when": "diversion.hasRepo && resourceScheme == file && !explorerResourceIsFolder",
+          "group": "7_modification@3"
         }
       ],
       "editor/title/context": [
@@ -796,6 +807,11 @@
           "command": "diversion.unlockFile",
           "when": "diversion.hasRepo && resourceScheme == file",
           "group": "7_modification@2"
+        },
+        {
+          "command": "diversion.fileHistory",
+          "when": "diversion.hasRepo && resourceScheme == file",
+          "group": "7_modification@3"
         }
       ]
     },
@@ -874,7 +890,7 @@
       {
         "name": "diversion_file_history",
         "displayName": "Diversion: File History",
-        "modelDescription": "Returns commits that touched a specific file or directory. Equivalent to `git log -- <path>`. Use this when the user asks 'who changed file X', 'when was Y last modified', or wants the history of a single file.",
+        "modelDescription": "Returns commits that touched a specific file or directory. Equivalent to `git log -- <path>`. Use this when the user asks 'who changed file X', 'when was Y last modified', or wants the history of a single file. Set includeSquashed to also surface commits that merges squashed away, which is how you recover a file's history from before a merge, with the original author and message.",
         "userDescription": "Show the commit history of a specific file or directory.",
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "dvFileHistory",
@@ -888,7 +904,11 @@
             "path": { "type": "string", "description": "Repo-relative file or directory path." },
             "limit": { "type": "number", "minimum": 1, "maximum": 1000 },
             "since": { "type": "string" },
-            "until": { "type": "string" }
+            "until": { "type": "string" },
+            "includeSquashed": {
+              "type": "boolean",
+              "description": "Also report commits that merges squashed away. Slower — it shells out to dv."
+            }
           }
         }
       },

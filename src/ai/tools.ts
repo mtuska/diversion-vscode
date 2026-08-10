@@ -58,7 +58,7 @@ interface ShelfApplyArg extends RepoArg { shelf: string; keepShelfAfter?: boolea
 interface ShelfArg extends RepoArg { shelf: string }
 interface ShelfRenameArg extends ShelfArg { newName: string }
 interface LogFilteredArg extends RepoArg { limit?: number; since?: string; until?: string }
-interface FileHistoryArg extends LogFilteredArg { path: string }
+interface FileHistoryArg extends LogFilteredArg { path: string; includeSquashed?: boolean }
 interface OverlapArg extends RepoArg { lookback?: number; since?: string }
 interface BranchArg extends RepoArg { branch: string }
 interface BranchRenameArg extends BranchArg { newName: string }
@@ -176,12 +176,19 @@ async function logBody(repo: Repo, args: LogFilteredArg): Promise<string> {
 }
 
 async function fileHistoryBody(repo: Repo, args: FileHistoryArg): Promise<string> {
-  const opts: { path: string; limit?: number; since?: string; until?: string } = {
+  const opts: {
+    path: string;
+    limit?: number;
+    since?: string;
+    until?: string;
+    showSquashed?: boolean;
+  } = {
     path: nonEmpty('path', args.path),
     limit: Math.max(1, Math.min(1000, args.limit ?? 20)),
   };
   if (args.since) opts.since = args.since;
   if (args.until) opts.until = args.until;
+  if (args.includeSquashed) opts.showSquashed = true;
   const commits = await repo.logFiltered(opts);
   if (commits.length === 0) return `(no commits touch ${args.path})`;
   return formatCommits(commits);

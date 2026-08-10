@@ -198,6 +198,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('diversion.discardChanges', discardChangesCommand),
     vscode.commands.registerCommand('diversion.discardAll', discardAllCommand),
     vscode.commands.registerCommand('diversion.viewHistory', viewHistoryCommand),
+    vscode.commands.registerCommand('diversion.fileHistory', fileHistoryCommand),
     vscode.commands.registerCommand('diversion.openInWeb', openInWebCommand),
     vscode.commands.registerCommand('diversion.switchBranch', switchBranchCommand),
     vscode.commands.registerCommand('diversion.createBranch', createBranchCommand),
@@ -1645,6 +1646,41 @@ async function viewHistoryCommand(sourceControl?: vscode.SourceControl): Promise
     showLogWebview(provider.repo.info.repoName, commits);
   } catch (err) {
     void vscode.window.showErrorMessage(`Diversion: load history failed: ${(err as Error).message}`);
+  }
+}
+
+/**
+ * History of one file, including the commits merges squashed away.
+ *
+ * The CoreAPI object-history endpoint stops at the merge boundary, so the
+ * "across every merge" view has to come from `dv log --show-squashed`. It's a
+ * slower path (a dv spawn plus text parsing), so plain history stays on the
+ * API and this is the deliberate, asked-for variant.
+ */
+async function fileHistoryCommand(target?: vscode.Uri): Promise<void> {
+  const uri = target ?? vscode.window.activeTextEditor?.document.uri;
+  if (!uri || uri.scheme !== 'file') {
+    void vscode.window.showInformationMessage('Diversion: open a file, or pick one in the explorer.');
+    return;
+  }
+  const provider = providerForUri(uri);
+  if (!provider) {
+    void vscode.window.showInformationMessage('Diversion: that file is not in a Diversion repo.');
+    return;
+  }
+  const relPath = path.relative(provider.repo.root, uri.fsPath);
+  try {
+    const commits = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Window, title: `Diversion: history of ${path.basename(relPath)}…` },
+      () => provider.repo.fileHistory(relPath, 100, /* showSquashed */ true),
+    );
+    if (commits.length === 0) {
+      void vscode.window.showInformationMessage(`Diversion: no commits touch ${relPath}.`);
+      return;
+    }
+    showLogWebview(`${provider.repo.info.repoName} · ${relPath}`, commits);
+  } catch (err) {
+    void vscode.window.showErrorMessage(`Diversion: file history failed: ${(err as Error).message}`);
   }
 }
 

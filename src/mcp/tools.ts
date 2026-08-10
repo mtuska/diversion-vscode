@@ -233,15 +233,26 @@ export function registerAllTools(
           .describe('Maximum commits to return. Default 20, max 1000.'),
         since: z.string().optional(),
         until: z.string().optional(),
+        includeSquashed: z.boolean().optional().describe(
+          'Also report commits that merges squashed away, so history survives merges ' +
+          '(original author, message, and branch). Slower — it shells out to dv.',
+        ),
       },
     },
     safe(registry, async (args, repo) => {
-      const opts: { path: string; limit?: number; since?: string; until?: string } = {
+      const opts: {
+        path: string;
+        limit?: number;
+        since?: string;
+        until?: string;
+        showSquashed?: boolean;
+      } = {
         path: nonEmpty('path', args.path),
         limit: args.limit ?? 20,
       };
       if (args.since) opts.since = args.since;
       if (args.until) opts.until = args.until;
+      if (args.includeSquashed) opts.showSquashed = true;
       const commits = await repo.logFiltered(opts);
       if (commits.length === 0) return text(`(no commits touch ${args.path})`);
       const blocks = commits.map((c) => {

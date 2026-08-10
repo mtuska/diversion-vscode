@@ -8,6 +8,7 @@ import { parseStatus, type ParsedStatus } from './parsers/status.js';
 import { parseDiffNameStatus } from './parsers/diffNameStatus.js';
 import { parseLockList, type LockInfo } from './parsers/lock.js';
 import { parseAnnotation, type Annotation } from './parsers/annotate.js';
+import { parseLogFull } from './parsers/log.js';
 import { parseTagList, type TagInfo } from './parsers/tag.js';
 import { findSyncConflicts, type SyncConflict } from './conflicts.js';
 import type { DaemonClient } from './daemon.js';
@@ -445,10 +446,12 @@ export class Repo {
     limit?: number;
     since?: string;
     until?: string;
+    /** Include commits squashed away by merges. Requires `path`. */
+    showSquashed?: boolean;
   } = {}): Promise<CommitDetails[]> {
     const limit = opts.limit ?? 20;
     const commits = opts.path
-      ? await this.core.fileHistory(this.identity.repoId, this.identity.commitId, opts.path, limit)
+      ? await this.fileHistory(opts.path, limit, opts.showSquashed ?? false)
       : await this.core.listCommits(this.identity.repoId, { limit });
     const sinceMs = resolveDateBound(opts.since);
     const untilMs = resolveDateBound(opts.until);
@@ -496,9 +499,24 @@ export class Repo {
     return results.filter((r) => r.touched.length > 0);
   }
 
-  /** Per-file history via the CoreAPI object-history endpoint. */
-  async fileHistory(relPath: string, limit = 20): Promise<CommitDetails[]> {
-    return this.core.fileHistory(this.identity.repoId, this.identity.commitId, relPath, limit);
+  /**
+   * Per-file history.
+   *
+   * Normally the CoreAPI object-history endpoint. With `showSquashed` we drop
+   * to `dv log --show-squashed`, which also reports the commits a merge
+   * squashed away — so a file's history survives merges, with the original
+   * author and message intact. The CoreAPI has no equivalent parameter, so
+   * this is the one read where the CLI is strictly more capable.
+   */
+  async fileHistory(relPath: string, limit = 20, showSquashed = false): Promise<CommitDetails[]> {
+    if (!showSquashed) {
+      return this.core.fileHistory(this.identity.repoId, this.identity.commitId, relPath, limit);
+    }
+    const r = await runDvOrThrow(
+      ['log', '--show-squashed', '--date', 'iso', '-n', String(limit), safeRepoPath(this.root, relPath)],
+      { cwd: this.root, dvPath: this.dvPath, timeoutMs: 120_000 },
+    );
+    return parseLogFull(r.stdout).slice(0, limit);
   }
 
   /** List all tags in the repo. dv supports `--json` here, so we parse cleanly. */

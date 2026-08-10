@@ -1,0 +1,22 @@
+
+commit dv.commit.40 (dv.branch.1)
+Author: A. Sample <author@example.com>
+Date:   2026-04-11T20:42:03Z
+
+	TEST2
+
+
+commit dv.commit.38 (dv.branch.1)
+Merge:  ai-tuska dv.branch.5
+Author: A. Sample <author@example.com>
+Date:   2026-04-11T20:39:05Z
+
+	TEST
+
+
+commit dv.commit.37 (dv.branch.1)
+Author: A. Sample <author@example.com>
+Date:   2026-04-11T20:34:21Z
+
+	Updated perception to stagger updates for the character so it doesn't happen on the same frame
+
