@@ -157,6 +157,18 @@
         "icon": "$(git-pull-request)"
       },
       {
+        "command": "diversion.resolveMergeConflicts",
+        "title": "Resolve Merge Conflicts...",
+        "category": "Diversion",
+        "icon": "$(merge)"
+      },
+      {
+        "command": "diversion.submitMergeResolution",
+        "title": "Submit Merge Resolution",
+        "category": "Diversion",
+        "icon": "$(check)"
+      },
+      {
         "command": "diversion.lockFile",
         "title": "Lock File",
         "category": "Diversion",
@@ -508,9 +520,14 @@
           "group": "2_branch@4"
         },
         {
-          "command": "diversion.manageTags",
+          "command": "diversion.resolveMergeConflicts",
           "when": "scmProvider == diversion",
           "group": "2_branch@5"
+        },
+        {
+          "command": "diversion.manageTags",
+          "when": "scmProvider == diversion",
+          "group": "2_branch@6"
         },
         {
           "command": "diversion.updateWorkspace",

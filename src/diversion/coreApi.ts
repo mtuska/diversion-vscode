@@ -15,13 +15,16 @@ import type {
   CoreCommit,
   CoreComparisonItem,
   CoreComparisonResponse,
+  CoreDetailedMerge,
   CoreListEnvelope,
   CoreMerge,
   CoreOtherStatusesResponse,
   CoreRepo,
   CoreShelf,
   CoreToken,
+  DetailedOpenMerge,
   FileChange,
+  MergeConflict,
   OpenMerge,
   RepoListEntry,
   ShelfInfo,
@@ -297,6 +300,89 @@ export class CoreApiClient {
     });
   }
 
+  /** One open merge with its per-path conflicts. */
+  async getMerge(repoId: string, mergeId: string): Promise<DetailedOpenMerge> {
+    const m = await this.get<CoreDetailedMerge>(`/repos/${enc(repoId)}/merges/${enc(mergeId)}`);
+    const merge: DetailedOpenMerge = {
+      id: m.id,
+      baseRef: m.base_ref,
+      otherRef: m.other_ref,
+      conflicts: (m.conflicts ?? []).map((c) => {
+        const conflict: MergeConflict = {
+          id: c.conflict_id,
+          resolved: Boolean(c.is_resolved),
+          path: c.other?.path || c.base?.path || '(unknown)',
+          basePath: c.base?.path ?? '',
+          otherPath: c.other?.path ?? '',
+          // Mode is a required query param when submitting; prefer the
+          // incoming side's, which is what a "keep incoming" result carries.
+          fileMode: c.other?.file_mode ?? c.base?.file_mode ?? 0o100644,
+        };
+        if (c.resolved_side) conflict.resolvedSide = c.resolved_side;
+        return conflict;
+      }),
+    };
+    const who = m.user?.full_name || m.user?.name;
+    if (who) merge.startedBy = who;
+    return merge;
+  }
+
+  /**
+   * Raw file content at a ref. The endpoint answers either 200 with the bytes
+   * inline or 204 with a `Location` pointing at presigned object storage.
+   *
+   * We follow the redirect but never attach the bearer to it — the URL is
+   * already presigned, and the token is write-capable, so handing it to
+   * whatever host `Location` names is not a risk worth taking. If Diversion
+   * ever redirects somewhere that *does* need auth we'll see a 401 here
+   * rather than having quietly leaked the credential.
+   */
+  async blobText(repoId: string, refId: string, relPath: string): Promise<string> {
+    const pathname = `/repos/${enc(repoId)}/blobs/${enc(refId)}/${encodePath(relPath)}`;
+    const res = await this.rawRequest(pathname, { accept: 'application/octet-stream' });
+    if (res.status === 204) {
+      const location = res.headers.get('location');
+      if (!location) throw new CoreApiError(`${pathname} → 204 with no Location header`, 204);
+      const follow = await fetch(location, { headers: { Accept: 'application/octet-stream' } });
+      if (!follow.ok) {
+        throw new CoreApiError(`blob redirect → HTTP ${follow.status}`, follow.status);
+      }
+      return follow.text();
+    }
+    return res.text();
+  }
+
+  /**
+   * Submit the resolved content for one conflicting path.
+   *
+   * Only `mode` is required; `storage_backend` / `storage_uri` exist for the
+   * async upload flow and `sha1` with it, so an inline resolution is just the
+   * bytes plus the mode we read off the conflict.
+   */
+  async setConflictResult(
+    repoId: string,
+    mergeId: string,
+    conflictId: string,
+    content: string,
+    fileMode: number,
+  ): Promise<void> {
+    const body = Buffer.from(content, 'utf8');
+    const qs = new URLSearchParams({ mode: String(fileMode), size: String(body.byteLength) });
+    await this.rawRequest(
+      `/repos/${enc(repoId)}/merges/${enc(mergeId)}/conflicts/${enc(conflictId)}?${qs.toString()}`,
+      { method: 'POST', body, contentType: 'application/octet-stream' },
+    );
+  }
+
+  /** Commit the merge once every conflict is resolved. */
+  async finalizeMerge(repoId: string, mergeId: string, commitMessage: string): Promise<void> {
+    await this.rawRequest(`/repos/${enc(repoId)}/merges/${enc(mergeId)}`, {
+      method: 'POST',
+      body: JSON.stringify({ commit_message: commitMessage }),
+      contentType: 'application/json',
+    });
+  }
+
   // ───── shelves ─────
 
   async listShelves(repoId: string): Promise<ShelfInfo[]> {
@@ -414,6 +500,61 @@ export class CoreApiClient {
       }
       throw err;
     }
+  }
+
+  /**
+   * A single request returning the raw `Response`, for the endpoints that
+   * aren't JSON-in / JSON-out: blob downloads (which may 204-redirect) and
+   * the merge-resolution writes (octet-stream up, empty down).
+   *
+   * Deliberately not retried. `get` retries transient connection failures
+   * because every call behind it is an idempotent read; a POST that resolves
+   * a conflict or finalizes a merge is not safe to replay blindly.
+   */
+  private rawRequest(
+    pathname: string,
+    opts: { method?: string; body?: string | Uint8Array; contentType?: string; accept?: string } = {},
+  ): Promise<Response> {
+    return this.limiter.run(async () => {
+      const token = await this.bearer();
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), this.timeoutMs);
+      try {
+        const headers: Record<string, string> = {
+          Authorization: `Bearer ${token}`,
+          Accept: opts.accept ?? 'application/json',
+          'X-DV-App-Name': APP_NAME,
+          'X-DV-App-Version': APP_VERSION,
+          'X-Sentry-Correlation-ID': randomUUID(),
+        };
+        if (opts.contentType) headers['Content-Type'] = opts.contentType;
+        const res = await fetch(this.baseUrl + pathname, {
+          method: opts.method ?? 'GET',
+          headers,
+          ...(opts.body !== undefined ? { body: opts.body } : {}),
+          signal: ctrl.signal,
+          // 204+Location is a documented response here, not an HTTP redirect
+          // to follow blindly — we decide per-host whether to send the token.
+          redirect: 'manual',
+        });
+        if (res.status === 401 || res.status === 403) this.token = undefined;
+        if (!res.ok && res.status !== 204) {
+          const detail = await res.text().catch(() => '');
+          throw new CoreApiError(`${pathname} → HTTP ${res.status}: ${detail.slice(0, 200)}`, res.status);
+        }
+        return res;
+      } catch (err) {
+        if (err instanceof CoreApiError) throw err;
+        const timedOut = (err as Error)?.name === 'AbortError';
+        throw new CoreApiError(
+          timedOut
+            ? `CoreAPI request to ${pathname} timed out after ${this.timeoutMs}ms`
+            : `CoreAPI request to ${pathname} failed: ${(err as Error).message}`,
+        );
+      } finally {
+        clearTimeout(timer);
+      }
+    });
   }
 
   private attempt<T>(pathname: string): Promise<T> {

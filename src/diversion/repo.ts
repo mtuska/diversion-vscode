@@ -15,6 +15,7 @@ import type {
   BranchInfo,
   CommitDetails,
   CommitSummary,
+  DetailedOpenMerge,
   FileChange,
   OpenMerge,
   RepoIdentity,
@@ -380,6 +381,48 @@ export class Repo {
    */
   async listOpenMerges(): Promise<OpenMerge[]> {
     return this.core.listOpenMerges(this.identity.repoId);
+  }
+
+  /** One open merge with its per-path conflicts. */
+  async getMerge(mergeId: string): Promise<DetailedOpenMerge> {
+    return this.core.getMerge(this.identity.repoId, safeRef(mergeId, 'merge'));
+  }
+
+  /** Text of a conflicting path on one side of a merge. */
+  async mergeSideContent(ref: string, relPath: string): Promise<string> {
+    return this.core.blobText(this.identity.repoId, safeRef(ref), relPath);
+  }
+
+  /**
+   * Submit resolved content for one conflicting path. This is a CoreAPI
+   * *write* — the only one we make. Everything else that mutates goes through
+   * the CLI so the local agent stays authoritative about sync state, but dv
+   * exposes no per-conflict resolution command, so there is no CLI route.
+   */
+  async resolveMergeConflict(
+    mergeId: string,
+    conflictId: string,
+    content: string,
+    fileMode: number,
+  ): Promise<void> {
+    await this.core.setConflictResult(
+      this.identity.repoId, safeRef(mergeId, 'merge'), conflictId, content, fileMode,
+    );
+  }
+
+  /**
+   * Commit a fully-resolved merge, then wake the agent so the merged result
+   * syncs down rather than waiting for the next poll.
+   */
+  async finalizeMerge(mergeId: string, commitMessage: string): Promise<void> {
+    if (commitMessage.length > MAX_COMMIT_MESSAGE_LEN) {
+      throw new Error(
+        `Commit message is ${commitMessage.length} characters; ` +
+        `dv accepts at most ${MAX_COMMIT_MESSAGE_LEN}.`,
+      );
+    }
+    await this.core.finalizeMerge(this.identity.repoId, safeRef(mergeId, 'merge'), commitMessage);
+    await this.notifySyncRequired();
   }
 
   async logOneline(limit = 50): Promise<CommitSummary[]> {

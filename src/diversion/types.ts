@@ -162,6 +162,29 @@ export interface OpenMerge {
   startedBy?: string;
 }
 
+/** Which version of a conflicting path won. */
+export type ConflictSide = 'RESULT' | 'BASE' | 'OTHER';
+
+/**
+ * One conflicting path inside an open merge. `base` is the destination
+ * branch's version ("current"), `other` the incoming one.
+ */
+export interface MergeConflict {
+  id: string;
+  resolved: boolean;
+  resolvedSide?: ConflictSide;
+  /** Display path. The two sides differ only for a rename conflict. */
+  path: string;
+  basePath: string;
+  otherPath: string;
+  /** Unix file mode, echoed back when submitting a resolution. */
+  fileMode: number;
+}
+
+export interface DetailedOpenMerge extends OpenMerge {
+  conflicts: MergeConflict[];
+}
+
 export interface RepoListEntry {
   name: string;
   /** Stable repo ID, e.g. `dv.repo.<uuid>`. */
@@ -242,6 +265,30 @@ export interface CoreMerge {
   other_ref: string;
   ancestor_commit?: string;
   user?: CoreAuthor;
+}
+
+/** One side (base / other / result) of a conflicting path in a merge. */
+export interface CoreConflictIndex {
+  conflict_index_id: ConflictSide;
+  /** Unix file mode. Required when echoing a resolution back. */
+  file_mode: number;
+  path: string;
+  prev_path?: string;
+  type?: number;
+  size?: number;
+}
+
+export interface CoreConflict {
+  conflict_id: string;
+  is_resolved: boolean;
+  resolved_side?: ConflictSide;
+  base: CoreConflictIndex;
+  other: CoreConflictIndex;
+  result?: CoreConflictIndex;
+}
+
+export interface CoreDetailedMerge extends CoreMerge {
+  conflicts?: CoreConflict[];
 }
 
 export interface CoreShelf {

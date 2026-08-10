@@ -248,6 +248,95 @@ describe('CoreApiClient.listOpenMerges', () => {
   });
 });
 
+describe('CoreApiClient merge conflict resolution', () => {
+  const DETAILED = {
+    id: 'dv.merge.1',
+    repo_id: REPO,
+    base_ref: 'dv.branch.1',
+    other_ref: 'dv.branch.7',
+    ancestor_commit: 'dv.commit.100',
+    conflicts: [
+      {
+        conflict_id: 'c1',
+        is_resolved: false,
+        base: { conflict_index_id: 'BASE', file_mode: 33188, path: 'src/a.ts', type: 3 },
+        other: { conflict_index_id: 'OTHER', file_mode: 33188, path: 'src/a.ts', type: 3 },
+      },
+      {
+        conflict_id: 'c2',
+        is_resolved: true,
+        resolved_side: 'OTHER',
+        base: { conflict_index_id: 'BASE', file_mode: 33188, path: 'src/b.ts', type: 3 },
+        other: { conflict_index_id: 'OTHER', file_mode: 33261, path: 'src/b.ts', type: 3 },
+      },
+    ],
+  };
+
+  it('maps conflicts and carries the file mode needed to submit', async () => {
+    stubFetch([['/merges/dv.merge.1', DETAILED]]);
+    const merge = await new CoreApiClient(fakeDaemon(), logger).getMerge(REPO, 'dv.merge.1');
+    expect(merge.conflicts).toHaveLength(2);
+    expect(merge.conflicts[0]).toEqual({
+      id: 'c1', resolved: false, path: 'src/a.ts',
+      basePath: 'src/a.ts', otherPath: 'src/a.ts', fileMode: 33188,
+    });
+    expect(merge.conflicts[1]!.resolved).toBe(true);
+    expect(merge.conflicts[1]!.resolvedSide).toBe('OTHER');
+    // The incoming side's mode wins — that's what a "keep incoming" carries.
+    expect(merge.conflicts[1]!.fileMode).toBe(33261);
+  });
+
+  it('posts the resolved bytes with mode and size', async () => {
+    const fn = vi.fn(async () => ({ ok: true, status: 202, async text() { return ''; }, async json() { return {}; } }));
+    vi.stubGlobal('fetch', fn);
+    await new CoreApiClient(fakeDaemon(), logger)
+      .setConflictResult(REPO, 'dv.merge.1', 'c1', 'merged\n', 33188);
+    const [url, init] = fn.mock.calls[0]! as unknown as [string, Record<string, unknown>];
+    expect(String(url)).toContain('/merges/dv.merge.1/conflicts/c1');
+    expect(String(url)).toContain('mode=33188');
+    expect(String(url)).toContain('size=7');
+    expect(init.method).toBe('POST');
+    expect((init.headers as Record<string, string>)['Content-Type']).toBe('application/octet-stream');
+  });
+
+  it('finalizes with a commit message', async () => {
+    const fn = vi.fn(async () => ({ ok: true, status: 200, async text() { return ''; }, async json() { return {}; } }));
+    vi.stubGlobal('fetch', fn);
+    await new CoreApiClient(fakeDaemon(), logger).finalizeMerge(REPO, 'dv.merge.1', 'Merge it');
+    const [, init] = fn.mock.calls[0]! as unknown as [string, Record<string, unknown>];
+    expect(init.method).toBe('POST');
+    expect(init.body).toBe(JSON.stringify({ commit_message: 'Merge it' }));
+  });
+
+  it('reads an inline blob', async () => {
+    const fn = vi.fn(async () => ({
+      ok: true, status: 200, headers: new Headers(),
+      async text() { return 'file contents'; },
+    }));
+    vi.stubGlobal('fetch', fn);
+    const text = await new CoreApiClient(fakeDaemon(), logger).blobText(REPO, 'dv.branch.1', 'src/a.ts');
+    expect(text).toBe('file contents');
+  });
+
+  // The bearer is write-capable. Following a 204 redirect to presigned object
+  // storage must not carry it to a non-Diversion host.
+  it('follows a 204 blob redirect without forwarding the bearer', async () => {
+    const fn = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false, status: 204,
+        headers: new Headers({ location: 'https://s3.example.com/blob?sig=abc' }),
+        async text() { return ''; },
+      })
+      .mockResolvedValueOnce({ ok: true, status: 200, async text() { return 'from storage'; } });
+    vi.stubGlobal('fetch', fn);
+    const text = await new CoreApiClient(fakeDaemon(), logger).blobText(REPO, 'dv.branch.1', 'a.bin');
+    expect(text).toBe('from storage');
+    const [, init] = fn.mock.calls[1]! as unknown as [string, { headers: Record<string, string> }];
+    expect(JSON.stringify(init.headers)).not.toContain('tok');
+    expect(init.headers).not.toHaveProperty('Authorization');
+  });
+});
+
 describe('CoreApiClient.listRepos', () => {
   it('marks repos cloned locally using the agent registry', async () => {
     stubFetch([['/repos', {

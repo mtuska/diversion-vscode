@@ -15,6 +15,7 @@ import { ChangeDecorationsProvider } from './scm/changeDecorations.js';
 import { IgnoreManager } from './util/ignore.js';
 import { Blame } from './scm/blame.js';
 import { ShelvesTreeProvider, type ShelfNode } from './scm/shelvesView.js';
+import { MergeConflictResolver } from './scm/mergeConflicts.js';
 import { watchWorkspace } from './util/fsWatch.js';
 import { StatusBar } from './ui/statusBar.js';
 import { showLogWebview } from './ui/webviews/log.js';
@@ -33,6 +34,7 @@ let changeDecorations: ChangeDecorationsProvider | undefined;
 let blame: Blame | undefined;
 let shelvesProvider: ShelvesTreeProvider | undefined;
 let commitContent: CommitContentProvider | undefined;
+let mergeConflicts: MergeConflictResolver | undefined;
 const providers = new Map<string, DiversionScmProvider>();
 const ignoreManagers = new Map<string, IgnoreManager>();
 /**
@@ -157,11 +159,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     () => [...providers.values()].map((p) => p.repo),
     log,
   );
+  mergeConflicts = new MergeConflictResolver(context.globalStorageUri, log);
 
   context.subscriptions.push(
     statusBar,
     quickDiff,
     commitContent,
+    mergeConflicts,
     lockDecorations,
     changeDecorations,
     blame,
@@ -199,6 +203,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('diversion.createBranch', createBranchCommand),
     vscode.commands.registerCommand('diversion.merge', mergeCommand),
     vscode.commands.registerCommand('diversion.showOpenMerges', showOpenMergesCommand),
+    vscode.commands.registerCommand('diversion.resolveMergeConflicts', resolveMergeConflictsCommand),
+    vscode.commands.registerCommand('diversion.submitMergeResolution', submitMergeResolutionCommand),
     vscode.commands.registerCommand('diversion.lockFile', lockFileCommand),
     vscode.commands.registerCommand('diversion.unlockFile', unlockFileCommand),
     vscode.commands.registerCommand('diversion.listLocks', listLocksCommand),
@@ -616,6 +622,7 @@ async function moreActionsCommand(): Promise<void> {
     { label: '$(add) Create Branch…', command: 'diversion.createBranch' },
     { label: '$(git-merge) Merge Into Current…', command: 'diversion.merge' },
     { label: '$(git-pull-request) Show Unresolved Merges…', command: 'diversion.showOpenMerges' },
+    { label: '$(merge) Resolve Merge Conflicts…', command: 'diversion.resolveMergeConflicts' },
     sep('Sync'),
     { label: '$(sync) Update Workspace', command: 'diversion.updateWorkspace' },
     { label: '$(debug-pause) Pause Sync', command: 'diversion.pauseSync' },
@@ -2307,10 +2314,10 @@ async function openMergesFor(provider: DiversionScmProvider): Promise<OpenMerge[
 }
 
 /**
- * Conflicting merges are resolved block-by-block in the Diversion app — there
- * is no filesystem representation for us to hand to VS Code's merge editor
- * (unlike `.dv-conflict` sidecars, which are a different thing entirely). The
- * useful thing we can do is say so plainly and open the app on the repo.
+ * A conflicting merge is parked server-side with no filesystem representation,
+ * so we offer both routes: resolve it here block by block (materialising each
+ * conflicting path as a marker-annotated scratch file), or hand off to the
+ * Diversion app.
  */
 async function promptToResolveMerges(
   provider: DiversionScmProvider,
@@ -2321,9 +2328,13 @@ async function promptToResolveMerges(
     ? `${merges[0]!.otherRef} → ${merges[0]!.baseRef}`
     : `${merges.length} unresolved merges`;
   const choice = await vscode.window.showWarningMessage(
-    `Diversion: ${headline} Resolve the conflicting blocks in the Diversion app (${detail}).`,
-    'Open in Diversion',
+    `Diversion: ${headline} (${detail})`,
+    'Resolve Here', 'Open in Diversion',
   );
+  if (choice === 'Resolve Here') {
+    await mergeConflicts?.start(provider.repo, merges.length === 1 ? merges[0]!.id : undefined);
+    return;
+  }
   if (choice === 'Open in Diversion') {
     try {
       await provider.repo.openInWeb();
@@ -2331,6 +2342,16 @@ async function promptToResolveMerges(
       void vscode.window.showErrorMessage(`Diversion: could not open the app: ${(err as Error).message}`);
     }
   }
+}
+
+async function resolveMergeConflictsCommand(): Promise<void> {
+  const provider = activeProvider();
+  if (!provider) return;
+  await mergeConflicts?.start(provider.repo);
+}
+
+async function submitMergeResolutionCommand(uri?: vscode.Uri): Promise<void> {
+  await mergeConflicts?.submit(uri);
 }
 
 async function showOpenMergesCommand(): Promise<void> {
@@ -2356,14 +2377,10 @@ async function showOpenMergesCommand(): Promise<void> {
       description: m.startedBy ? `started by ${m.startedBy}` : undefined,
       detail: m.id,
     })),
-    { placeHolder: `${merges.length} unresolved merge(s) — pick one to resolve in the Diversion app` },
+    { placeHolder: `${merges.length} unresolved merge(s) — pick one to resolve` },
   );
   if (!pick) return;
-  try {
-    await provider.repo.openInWeb();
-  } catch (err) {
-    void vscode.window.showErrorMessage(`Diversion: could not open the app: ${(err as Error).message}`);
-  }
+  await mergeConflicts?.start(provider.repo, pick.detail);
 }
 
 function pickProvider(sc?: vscode.SourceControl): DiversionScmProvider | undefined {

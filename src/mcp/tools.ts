@@ -495,6 +495,32 @@ export function registerAllTools(
     }),
   );
 
+  server.registerTool(
+    'dv_merge_conflicts',
+    {
+      title: 'Diversion: conflicts in an open merge',
+      description:
+        'List the conflicting paths in one open merge, with whether each is resolved ' +
+        'and which side won. Get the merge ID from dv_open_merges. Resolution itself ' +
+        'is interactive and happens in the editor or the Diversion app.',
+      inputSchema: {
+        ...repoArg,
+        merge: z.string().describe('Merge ID from dv_open_merges.'),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    safe(registry, async (args, repo) => {
+      const merge = await repo.getMerge(nonEmpty('merge', args.merge));
+      if (merge.conflicts.length === 0) return text(`Merge ${merge.id} reports no conflicts.`);
+      const lines = [`${merge.otherRef} → ${merge.baseRef} (${merge.id})`, ''];
+      for (const c of merge.conflicts) {
+        const state = c.resolved ? `resolved${c.resolvedSide ? ` (${c.resolvedSide})` : ''}` : 'UNRESOLVED';
+        lines.push(`${state.padEnd(20)} ${c.path}`);
+      }
+      return text(lines.join('\n'));
+    }),
+  );
+
   // ─── write tools ─────────────────────────────────────────────────────
   // Everything below mutates repository or workspace state. In read-only
   // mode we stop here so none of it is registered or reachable.
