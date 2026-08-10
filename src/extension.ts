@@ -219,6 +219,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('diversion.copyCommitId', copyCommitIdCommand),
     vscode.commands.registerCommand('diversion.copyCommitMessage', copyCommitMessageCommand),
     vscode.commands.registerCommand('diversion.createTagAtCommit', createTagAtCommitCommand),
+    vscode.commands.registerCommand('diversion.manageTags', manageTagsCommand),
     vscode.commands.registerCommand('diversion.compareWithCommit', compareWithCommitCommand),
     vscode.commands.registerCommand('diversion.openCommitInWeb', openCommitInWebCommand),
     vscode.commands.registerCommand('diversion.checkoutBranchAtCommit', checkoutBranchAtCommitCommand),
@@ -622,6 +623,8 @@ async function moreActionsCommand(): Promise<void> {
     { label: '$(lock) Lock File', command: 'diversion.lockFile' },
     { label: '$(unlock) Unlock File', command: 'diversion.unlockFile' },
     { label: '$(list-tree) List Locks…', command: 'diversion.listLocks' },
+    sep('Tags'),
+    { label: '$(tag) Manage Tags…', command: 'diversion.manageTags' },
     sep('View'),
     { label: '$(history) View History', command: 'diversion.viewHistory' },
     { label: '$(globe) Open in Web UI', command: 'diversion.openInWeb' },
@@ -1701,9 +1704,109 @@ async function createTagAtCommitCommand(...args: unknown[]): Promise<void> {
       { location: vscode.ProgressLocation.SourceControl, title: `dv tag ${name.trim()}` },
       () => provider.repo.createTag(name.trim(), id, description?.trim() || undefined),
     );
+    // The graph renders tags as refs, so it has to re-query to show the new one.
+    provider.notifyHistoryRefsChanged();
     void vscode.window.showInformationMessage(`Tagged ${id} as ${name.trim()}.`);
   } catch (err) {
     void vscode.window.showErrorMessage(`Diversion: create tag failed: ${(err as Error).message}`);
+  }
+}
+
+/**
+ * Tag browser: pick a tag, then pick what to do with it. dv keys `-m` and
+ * `-d` on the tag ID rather than its name, which is also the value users
+ * need when scripting — hence "Copy Tag ID" as a first-class action.
+ */
+async function manageTagsCommand(): Promise<void> {
+  const provider = activeProvider();
+  if (!provider) return;
+  let tags: Awaited<ReturnType<typeof provider.repo.listTags>>;
+  try {
+    tags = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Window, title: 'dv tag --json' },
+      () => provider.repo.listTags(),
+    );
+  } catch (err) {
+    void vscode.window.showErrorMessage(`Diversion: list tags failed: ${(err as Error).message}`);
+    return;
+  }
+  if (tags.length === 0) {
+    void vscode.window.showInformationMessage('Diversion: no tags in this repo.');
+    return;
+  }
+  const pick = await vscode.window.showQuickPick(
+    tags.map((t) => ({
+      label: `$(tag) ${t.name}`,
+      description: [t.commitId, t.date].filter(Boolean).join(' · '),
+      detail: t.description || t.id,
+      tag: t,
+    })),
+    { placeHolder: `${tags.length} tag(s)`, matchOnDescription: true, matchOnDetail: true },
+  );
+  if (!pick) return;
+
+  const action = await vscode.window.showQuickPick(
+    [
+      { label: '$(clippy) Copy Tag ID', action: 'copy' as const },
+      { label: '$(globe) Open Tagged Commit in Web', action: 'show' as const },
+      { label: '$(edit) Rename…', action: 'rename' as const },
+      { label: '$(edit) Edit Description…', action: 'describe' as const },
+      { label: '$(trash) Delete', action: 'delete' as const },
+    ],
+    { placeHolder: `${pick.tag.name} (${pick.tag.id})` },
+  );
+  if (!action) return;
+
+  const tag = pick.tag;
+  try {
+    switch (action.action) {
+      case 'copy':
+        await vscode.env.clipboard.writeText(tag.id);
+        void vscode.window.showInformationMessage(`Copied ${tag.id}.`);
+        return;
+      case 'show': {
+        if (!tag.commitId) {
+          void vscode.window.showWarningMessage(`Diversion: ${tag.name} has no commit recorded.`);
+          return;
+        }
+        await vscode.commands.executeCommand('diversion.openCommitInWeb', tag.commitId);
+        return;
+      }
+      case 'rename': {
+        const next = await vscode.window.showInputBox({
+          prompt: `Rename ${tag.name}`,
+          value: tag.name,
+          validateInput: (s) => s.trim() ? undefined : 'Name required',
+        });
+        if (!next || next.trim() === tag.name) return;
+        await provider.repo.modifyTag(tag.id, { name: next.trim() });
+        void vscode.window.showInformationMessage(`Renamed ${tag.name} to ${next.trim()}.`);
+        break;
+      }
+      case 'describe': {
+        const next = await vscode.window.showInputBox({
+          prompt: `Description for ${tag.name}`,
+          value: tag.description ?? '',
+        });
+        if (next === undefined) return;
+        await provider.repo.modifyTag(tag.id, { description: next.trim() });
+        void vscode.window.showInformationMessage(`Updated description for ${tag.name}.`);
+        break;
+      }
+      case 'delete': {
+        const ok = await vscode.window.showWarningMessage(
+          `Delete tag ${tag.name} (${tag.id})?`,
+          { modal: true }, 'Delete',
+        );
+        if (ok !== 'Delete') return;
+        await provider.repo.deleteTag(tag.id);
+        void vscode.window.showInformationMessage(`Deleted tag ${tag.name}.`);
+        break;
+      }
+    }
+    provider.notifyHistoryRefsChanged();
+  } catch (err) {
+    void vscode.window.showErrorMessage(`Diversion: tag operation failed: ${(err as Error).message}`);
   }
 }
 

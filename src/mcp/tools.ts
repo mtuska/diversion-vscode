@@ -777,6 +777,50 @@ export function registerAllTools(
   );
 
   server.registerTool(
+    'dv_modify_tag',
+    {
+      title: 'Diversion: rename or re-describe a tag',
+      description:
+        'Rename a tag and/or replace its description. Keyed on the tag ID ' +
+        '(`dv.tag.<n>`) from dv_list_tags, NOT the tag name. Pass at least one of ' +
+        '`name` / `description`.',
+      inputSchema: {
+        ...repoArg,
+        tag: z.string().describe('Tag ID, e.g. dv.tag.3 (from dv_list_tags).'),
+        name: z.string().optional().describe('New tag name.'),
+        description: z.string().optional().describe('New tag description. Pass "" to clear.'),
+      },
+    },
+    safe(registry, async (args, repo) => {
+      const tag = nonEmpty('tag', args.tag);
+      const opts: { name?: string; description?: string } = {};
+      if (args.name !== undefined) opts.name = args.name;
+      if (args.description !== undefined) opts.description = args.description;
+      await repo.modifyTag(tag, opts);
+      return text(`Tag ${tag} updated.`);
+    }),
+  );
+
+  server.registerTool(
+    'dv_delete_tag',
+    {
+      title: 'Diversion: delete a tag',
+      description:
+        'Delete a tag. Keyed on the tag ID (`dv.tag.<n>`) from dv_list_tags, NOT the tag name.',
+      inputSchema: {
+        ...repoArg,
+        tag: z.string().describe('Tag ID, e.g. dv.tag.3 (from dv_list_tags).'),
+      },
+      annotations: { destructiveHint: true },
+    },
+    safe(registry, async (args, repo) => {
+      const tag = nonEmpty('tag', args.tag);
+      await repo.deleteTag(tag);
+      return text(`Tag ${tag} deleted.`);
+    }),
+  );
+
+  server.registerTool(
     'dv_create_shelf',
     {
       title: 'Diversion: create a shelf',

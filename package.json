@@ -269,6 +269,12 @@
         "category": "Diversion"
       },
       {
+        "command": "diversion.manageTags",
+        "title": "Manage Tags...",
+        "category": "Diversion",
+        "icon": "$(tag)"
+      },
+      {
         "command": "diversion.compareWithCommit",
         "title": "Compare with...",
         "category": "Diversion"
@@ -500,6 +506,11 @@
           "command": "diversion.showOpenMerges",
           "when": "scmProvider == diversion",
           "group": "2_branch@4"
+        },
+        {
+          "command": "diversion.manageTags",
+          "when": "scmProvider == diversion",
+          "group": "2_branch@5"
         },
         {
           "command": "diversion.updateWorkspace",
@@ -1244,6 +1255,44 @@
             "name": { "type": "string" },
             "commit": { "type": "string", "description": "Commit to tag (defaults to current commit)." },
             "description": { "type": "string" }
+          }
+        }
+      },
+      {
+        "name": "diversion_modify_tag",
+        "displayName": "Diversion: Modify Tag",
+        "modelDescription": "Renames a tag and/or replaces its description. Keyed on the tag ID (dv.tag.<n>) from diversion_list_tags, NOT the tag name. Pass at least one of name / description.",
+        "userDescription": "Rename or re-describe a tag.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "dvModifyTag",
+        "tags": ["diversion", "scm"],
+        "icon": "$(tag)",
+        "inputSchema": {
+          "type": "object",
+          "required": ["tag"],
+          "properties": {
+            "repo": { "type": "string" },
+            "tag": { "type": "string", "description": "Tag ID, e.g. dv.tag.3." },
+            "name": { "type": "string", "description": "New tag name." },
+            "description": { "type": "string", "description": "New tag description. Pass \"\" to clear." }
+          }
+        }
+      },
+      {
+        "name": "diversion_delete_tag",
+        "displayName": "Diversion: Delete Tag",
+        "modelDescription": "Deletes a tag. Keyed on the tag ID (dv.tag.<n>) from diversion_list_tags, NOT the tag name.",
+        "userDescription": "Delete a tag.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "dvDeleteTag",
+        "tags": ["diversion", "scm"],
+        "icon": "$(trash)",
+        "inputSchema": {
+          "type": "object",
+          "required": ["tag"],
+          "properties": {
+            "repo": { "type": "string" },
+            "tag": { "type": "string", "description": "Tag ID, e.g. dv.tag.3." }
           }
         }
       },

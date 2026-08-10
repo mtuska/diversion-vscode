@@ -581,6 +581,26 @@ export class Repo {
   }
 
   /**
+   * Rename a tag and/or replace its description. Keyed on the tag **ID**
+   * (`dv.tag.<n>`), not the name — dv's `-m` takes an ID, and names aren't
+   * guaranteed stable across a rename race.
+   */
+  async modifyTag(tagId: string, opts: { name?: string; description?: string } = {}): Promise<void> {
+    const args = ['tag', '-m', safeRef(tagId, 'tag')];
+    if (opts.name) args.push('--name', safeRef(opts.name, 'tag'));
+    if (opts.description !== undefined) args.push('-a', opts.description);
+    if (args.length === 3) throw new Error('modifyTag: nothing to change (pass name and/or description).');
+    await runDvOrThrow(args, { cwd: this.root, dvPath: this.dvPath, timeoutMs: 30_000 });
+  }
+
+  /** Delete a tag by ID. `-f` skips the confirmation prompt dv would block on. */
+  async deleteTag(tagId: string): Promise<void> {
+    await runDvOrThrow(['tag', '-d', safeRef(tagId, 'tag'), '-f'], {
+      cwd: this.root, dvPath: this.dvPath, timeoutMs: 30_000,
+    });
+  }
+
+  /**
    * Fetch full details for a single commit. Returns undefined if dv has
    * no record of the ID (e.g. malformed input). Used by clipboard/share
    * actions that need the message body.

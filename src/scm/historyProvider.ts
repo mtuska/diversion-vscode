@@ -16,16 +16,14 @@ import type { Logger } from '../util/log.js';
  * `@types/vscode` and we drop the opt-in.
  *
  * Diversion-specific notes:
- * - Refs are branches from `dv branch`. Tags exist (`dv tag`) but aren't
- *   surfaced yet — straightforward follow-up.
- * - `provideHistoryItems` calls `dv log -n <limit>` and tolerates skip via
- *   `options.skip` (we re-run with a larger limit and slice; dv has no
- *   --skip flag as of v0.9.895).
- * - `provideHistoryItemChanges` calls `dv show <id> --name-status`.
- *   `originalUri` / `modifiedUri` are left undefined for now — the Graph
- *   still renders the file list; clicking opens the working file. Proper
- *   per-commit content URIs require a `dv-commit:<id>:<path>` scheme that
- *   resolves via cached `dv restore` output, planned for v0.4.
+ * - Refs are branches (CoreAPI) plus tags (`dv tag --json`), in the
+ *   `branches` and `tags` categories respectively.
+ * - `provideHistoryItems` reads commits from the CoreAPI and tolerates skip
+ *   via `options.skip` by over-fetching and slicing — there is no skip
+ *   parameter on the commits endpoint we can push down.
+ * - `provideHistoryItemChanges` uses the CoreAPI compare endpoint for the
+ *   file list, then resolves each side lazily through the `dv-commit:`
+ *   content provider when the user opens a file.
  */
 export class DiversionHistoryProvider implements vscode.SourceControlHistoryProvider {
   private readonly _onDidChangeCurrentHistoryItemRefs = new vscode.EventEmitter<void>();
@@ -87,7 +85,16 @@ export class DiversionHistoryProvider implements vscode.SourceControlHistoryProv
     _token: vscode.CancellationToken,
   ): Promise<vscode.SourceControlHistoryItemRef[]> {
     try {
-      const branches = await this.repo.listBranches();
+      // Tags are a separate CLI round-trip and strictly decorative here, so a
+      // tag failure must not cost us the branch refs the graph actually needs
+      // to draw itself.
+      const [branches, tags] = await Promise.all([
+        this.repo.listBranches(),
+        this.repo.listTags().catch((err) => {
+          this.logger.warn(`[history] listTags failed: ${(err as Error).message}`);
+          return [];
+        }),
+      ]);
       const refs: vscode.SourceControlHistoryItemRef[] = branches.map((b) => ({
         id: `branch:${b.name}`,
         name: b.name,
@@ -96,6 +103,18 @@ export class DiversionHistoryProvider implements vscode.SourceControlHistoryProv
         category: 'branches',
         icon: new vscode.ThemeIcon('git-branch'),
       }));
+      for (const t of tags) {
+        // A tag with no resolvable commit can't be placed on the graph.
+        if (!t.commitId) continue;
+        refs.push({
+          id: `tag:${t.id}`,
+          name: t.name,
+          description: t.description || t.id,
+          revision: t.commitId,
+          category: 'tags',
+          icon: new vscode.ThemeIcon('tag'),
+        });
+      }
       this.knownRefs = new Map(refs.map((r) => [r.id, r]));
       return refs;
     } catch (err) {

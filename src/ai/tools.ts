@@ -46,6 +46,9 @@ interface RevertArg extends CommitIdArg {
 interface RestoreArg extends RepoArg { ref: string; path: string }
 interface DiscardAllArg extends RepoArg { includeNew?: boolean }
 interface TagArg extends RepoArg { name: string; commit?: string; description?: string }
+/** dv keys tag modify/delete on the tag ID (`dv.tag.<n>`), never the name. */
+interface TagIdArg extends RepoArg { tag: string }
+interface TagModifyArg extends TagIdArg { name?: string; description?: string }
 interface ShelfCreateArg extends RepoArg {
   name: string;
   paths?: string[];
@@ -392,6 +395,21 @@ async function createTagBody(repo: Repo, args: TagArg): Promise<string> {
   return `Tag "${name}" created${args.commit ? ` at ${args.commit}` : ''}.`;
 }
 
+async function modifyTagBody(repo: Repo, args: TagModifyArg): Promise<string> {
+  const tag = nonEmpty('tag', args.tag);
+  const opts: { name?: string; description?: string } = {};
+  if (args.name !== undefined) opts.name = args.name;
+  if (args.description !== undefined) opts.description = args.description;
+  await repo.modifyTag(tag, opts);
+  return `Tag ${tag} updated.`;
+}
+
+async function deleteTagBody(repo: Repo, args: TagIdArg): Promise<string> {
+  const tag = nonEmpty('tag', args.tag);
+  await repo.deleteTag(tag);
+  return `Tag ${tag} deleted.`;
+}
+
 async function createShelfBody(repo: Repo, args: ShelfCreateArg): Promise<string> {
   const name = nonEmpty('name', args.name);
   await repo.createShelf(name, args.paths, args.keepWorkingChanges ?? false);
@@ -494,6 +512,8 @@ export function registerLanguageModelTools(
     { name: 'diversion_discard_path',     factory: () => new FnTool(getRepos, discardPathBody) },
     { name: 'diversion_discard_all',      factory: () => new FnTool(getRepos, discardAllBody) },
     { name: 'diversion_create_tag',       factory: () => new FnTool(getRepos, createTagBody) },
+    { name: 'diversion_modify_tag',       factory: () => new FnTool(getRepos, modifyTagBody) },
+    { name: 'diversion_delete_tag',       factory: () => new FnTool(getRepos, deleteTagBody) },
     { name: 'diversion_create_shelf',     factory: () => new FnTool(getRepos, createShelfBody) },
     { name: 'diversion_apply_shelf',      factory: () => new FnTool(getRepos, applyShelfBody) },
     { name: 'diversion_delete_shelf',     factory: () => new FnTool(getRepos, deleteShelfBody) },
