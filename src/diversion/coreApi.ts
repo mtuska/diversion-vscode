@@ -212,15 +212,29 @@ export class CoreApiClient {
   }
 
   /**
-   * Per-file history. CoreAPI exposes `compare` and `commits`; for a path
-   * we list commits scoped to the workspace then filter to those touching
-   * the path is too costly, so we use the dedicated object-history endpoint.
+   * Per-file history, via the dedicated object-history endpoint (listing all
+   * commits and filtering to those touching the path is far too costly).
+   *
+   * Pages with `limit`/`skip` like the other list readers. It previously
+   * issued a single request with the caller's full limit, so a caller asking
+   * for more than one page's worth — the MCP tool advertises up to 1000 —
+   * silently got one page back with no truncation signal.
    */
   async fileHistory(repoId: string, refId: string, relPath: string, limit = 20): Promise<CommitDetails[]> {
-    const res = await this.get<CoreListEnvelope<CoreCommit>>(
-      `/repos/${enc(repoId)}/files/history/${enc(refId)}/${encodePath(relPath)}?limit=${limit}`,
-    );
-    return (res.items ?? []).slice(0, limit).map(mapCommit);
+    const base = `/repos/${enc(repoId)}/files/history/${enc(refId)}/${encodePath(relPath)}`;
+    const out: CoreCommit[] = [];
+    let skip = 0;
+    while (out.length < limit) {
+      const page = Math.min(100, limit - out.length);
+      const res = await this.get<CoreListEnvelope<CoreCommit>>(
+        `${base}?${new URLSearchParams({ limit: String(page), skip: String(skip) }).toString()}`,
+      );
+      const items = res.items ?? [];
+      out.push(...items);
+      if (items.length < page) break; // ran out of history
+      skip += items.length;
+    }
+    return out.slice(0, limit).map(mapCommit);
   }
 
   async getCommit(repoId: string, commitId: string): Promise<CommitDetails | undefined> {

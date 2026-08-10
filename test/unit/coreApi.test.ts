@@ -281,6 +281,32 @@ describe('CoreApiClient pagination', () => {
     expect(String(fn.mock.calls[0]![0])).toContain('skip=0');
     expect(String(fn.mock.calls[1]![0])).toContain('skip=100');
   });
+
+  it('pages file history instead of truncating at one page', async () => {
+    const commit = (n: number) => ({ commit_id: `dv.commit.${n}`, commit_message: `m${n}`, created_ts: 1780075070 });
+    const fn = vi.fn()
+      .mockResolvedValueOnce(okJson({ items: Array.from({ length: 100 }, (_, i) => commit(i)) }))
+      .mockResolvedValueOnce(okJson({ items: Array.from({ length: 50 }, (_, i) => commit(100 + i)) }));
+    vi.stubGlobal('fetch', fn);
+    const history = await new CoreApiClient(fakeDaemon(), logger)
+      .fileHistory(REPO, 'dv.commit.900', 'src/deep/file.ts', 150);
+    expect(history).toHaveLength(150);
+    expect(fn).toHaveBeenCalledTimes(2);
+    expect(String(fn.mock.calls[0]![0])).toContain('limit=100&skip=0');
+    expect(String(fn.mock.calls[1]![0])).toContain('limit=50&skip=100');
+  });
+
+  it('stops file-history paging on a short page and keeps path separators', async () => {
+    const fn = vi.fn().mockResolvedValueOnce(okJson({
+      items: [{ commit_id: 'dv.commit.1', commit_message: 'only', created_ts: 1780075070 }],
+    }));
+    vi.stubGlobal('fetch', fn);
+    const history = await new CoreApiClient(fakeDaemon(), logger)
+      .fileHistory(REPO, 'dv.commit.900', 'src/a b/file.ts', 150);
+    expect(history).toHaveLength(1);
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(String(fn.mock.calls[0]![0])).toContain('/files/history/dv.commit.900/src/a%20b/file.ts');
+  });
 });
 
 describe('CoreApiClient retry policy', () => {
