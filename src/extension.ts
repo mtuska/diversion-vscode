@@ -21,6 +21,7 @@ import { showLogWebview } from './ui/webviews/log.js';
 import { looksBinary } from './util/binary.js';
 import { isInsideOrEqual } from './util/path.js';
 import { deleteSidecar } from './diversion/repo.js';
+import { buildConflictText, hasConflictMarkers } from './diversion/mergeMarkers.js';
 import type { ChangeKind, OpenMerge } from './diversion/types.js';
 import { registerLanguageModelTools } from './ai/tools.js';
 
@@ -906,13 +907,80 @@ async function listLocksCommand(): Promise<void> {
 
 // ──────────────────────────── conflicts ────────────────────────────
 
+/**
+ * Resolve a sync conflict block by block.
+ *
+ * The two versions are both already on disk — the sidecar holds your local
+ * copy and the agent overwrote the original with the incoming one. We diff
+ * them, write the differing regions back into the original as standard
+ * conflict markers, and open it. VS Code's built-in Merge Conflict extension
+ * then renders Accept Current / Accept Incoming / Accept Both / Compare above
+ * every block, which is the per-block decision we want to offer and costs us
+ * no UI of our own.
+ *
+ * Binary files can't be marked up, so they keep the side-by-side view.
+ */
 async function resolveConflictCommand(originalUri?: vscode.Uri, sidecarUri?: vscode.Uri): Promise<void> {
   if (!originalUri || !sidecarUri) {
     void vscode.window.showInformationMessage('Diversion: invoke this command on a conflict in the SCM panel.');
     return;
   }
-  const title = `${path.basename(originalUri.fsPath)} (your local ↔ incoming) — edit RIGHT side, then Mark Resolved`;
-  await vscode.commands.executeCommand('vscode.diff', sidecarUri, originalUri, title);
+  const name = path.basename(originalUri.fsPath);
+
+  if (await looksBinary(originalUri.fsPath) || await looksBinary(sidecarUri.fsPath)) {
+    const title = `${name} (your local ↔ incoming) — binary; replace the right side, then Mark Resolved`;
+    await vscode.commands.executeCommand('vscode.diff', sidecarUri, originalUri, title);
+    return;
+  }
+
+  let incoming: string;
+  let mine: string;
+  try {
+    [incoming, mine] = await Promise.all([
+      fs.readFile(originalUri.fsPath, 'utf8'),
+      fs.readFile(sidecarUri.fsPath, 'utf8'),
+    ]);
+  } catch (err) {
+    void vscode.window.showErrorMessage(`Diversion: could not read conflict files: ${(err as Error).message}`);
+    return;
+  }
+
+  // Re-running on a half-resolved file would nest markers inside markers.
+  if (hasConflictMarkers(incoming)) {
+    await vscode.window.showTextDocument(originalUri);
+    void vscode.window.showInformationMessage(
+      `${name} already has conflict markers — finish the remaining blocks, then Mark Resolved.`,
+    );
+    return;
+  }
+
+  const { text, conflictCount } = buildConflictText(mine, incoming, {
+    ours: 'Current (your local version)',
+    theirs: 'Incoming (from the branch)',
+  });
+
+  if (conflictCount === 0) {
+    // The sidecar and the incoming file are identical — there is nothing to
+    // decide, so the only useful action left is dropping the sidecar.
+    void vscode.window.showInformationMessage(
+      `${name}: your version and the incoming one are identical. Nothing to resolve.`,
+    );
+    await vscode.commands.executeCommand('diversion.markResolved', originalUri);
+    return;
+  }
+
+  try {
+    await fs.writeFile(originalUri.fsPath, text, 'utf8');
+  } catch (err) {
+    void vscode.window.showErrorMessage(`Diversion: could not write conflict markers: ${(err as Error).message}`);
+    return;
+  }
+
+  await vscode.window.showTextDocument(originalUri);
+  void vscode.window.showInformationMessage(
+    `${name}: ${conflictCount} conflicting block(s). Use the Accept actions above each block, ` +
+    `then run Mark Conflict Resolved.`,
+  );
 }
 
 async function markResolvedCommand(arg?: vscode.Uri | vscode.SourceControlResourceState): Promise<void> {
@@ -930,8 +998,28 @@ async function markResolvedCommand(arg?: vscode.Uri | vscode.SourceControlResour
     void vscode.window.showWarningMessage('Diversion: no sync-conflict sidecar found for that file.');
     return;
   }
+  // Deleting the sidecar throws away the only copy of the local version, so
+  // refuse while unresolved markers are still in the file — that combination
+  // means the user has not actually decided yet, and the markers would get
+  // committed verbatim.
+  const unresolved = await fs.readFile(conflict.originalPath, 'utf8')
+    .then((t) => hasConflictMarkers(t))
+    .catch(() => false);
+  if (unresolved) {
+    const proceed = await vscode.window.showWarningMessage(
+      `${path.basename(conflict.originalPath)} still contains conflict markers. ` +
+      `Resolve every block first — marking resolved now would commit the markers.`,
+      { modal: true }, 'Open the file', 'Delete sidecar anyway',
+    );
+    if (proceed === 'Open the file') {
+      await vscode.window.showTextDocument(vscode.Uri.file(conflict.originalPath));
+      return;
+    }
+    if (proceed !== 'Delete sidecar anyway') return;
+  }
+
   const ok = await vscode.window.showWarningMessage(
-    `Delete sidecar ${path.basename(conflict.sidecarPath)}? You should have already merged your local changes into the original file before marking resolved.`,
+    `Delete sidecar ${path.basename(conflict.sidecarPath)}? Your local version lives only in that file — make sure the original now holds the content you want.`,
     { modal: true }, 'Delete sidecar',
   );
   if (ok !== 'Delete sidecar') return;
