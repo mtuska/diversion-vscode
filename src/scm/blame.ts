@@ -1,6 +1,7 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import type { Repo } from '../diversion/repo.js';
+import { formatDay, formatRelative } from '../util/dates.js';
 import type { Logger } from '../util/log.js';
 
 interface RepoLookup {
@@ -128,7 +129,7 @@ export class Blame implements vscode.Disposable {
       if (isLastOfBlock) {
         const text = a.uncommitted
           ? '⏵ uncommitted'
-          : `⏵ ${a.author ?? '?'}${a.date ? ` · ${a.date}` : ''}${a.commitId ? ` · ${a.commitId}` : ''}`;
+          : `⏵ ${a.author ?? '?'}${a.date ? ` · ${formatRelative(a.date)}` : ''}${a.commitId ? ` · ${a.commitId}` : ''}`;
         decoration.renderOptions = { after: { contentText: text } };
       }
       decorations.push(decoration);
@@ -162,7 +163,7 @@ function hoverFor(a: { commitId?: string; author?: string; date?: string; uncomm
     md.appendMarkdown('**uncommitted** — line modified locally and not yet committed.');
   } else {
     md.appendMarkdown(`**${a.author ?? 'unknown'}**`);
-    if (a.date) md.appendMarkdown(` · ${a.date}`);
+    if (a.date) md.appendMarkdown(` · ${formatDay(a.date)}`);
     if (a.commitId) md.appendMarkdown(`\n\n\`${a.commitId}\``);
   }
   return md;

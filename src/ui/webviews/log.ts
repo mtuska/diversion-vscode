@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import type { CommitDetails } from '../../diversion/types.js';
+import { formatDateTime } from '../../util/dates.js';
 
 export function showLogWebview(repoName: string, commits: CommitDetails[]): void {
   const panel = vscode.window.createWebviewPanel(
@@ -21,7 +22,7 @@ function renderHtml(repoName: string, commits: CommitDetails[]): string {
       <div class="meta">
         <span>${escape(c.authorName)}</span>
         <span class="dim">&lt;${escape(c.authorEmail)}&gt;</span>
-        <span class="dim">${escape(c.date)}</span>
+        <span class="dim">${escape(formatDateTime(c.date))}</span>
         ${c.merge ? `<span class="merge">merge ${escape(c.merge.refName)} ${escape(c.merge.commitId)}</span>` : ''}
       </div>
       <pre>${escape(c.message)}</pre>

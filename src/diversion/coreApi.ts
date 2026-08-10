@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Semaphore } from '../util/semaphore.js';
+import { formatDay } from '../util/dates.js';
 import type { DaemonClient } from './daemon.js';
 import type { LoggerLike } from '../util/logCore.js';
 
@@ -389,7 +390,7 @@ export class CoreApiClient {
     const items = await this.listAll<CoreShelf>(`/repos/${enc(repoId)}/shelves`);
     return items.map((s) => {
       const date = Number.isFinite(s.created_timestamp)
-        ? new Date(s.created_timestamp * 1000).toISOString().slice(0, 10)
+        ? formatDay(new Date(s.created_timestamp * 1000).toISOString().slice(0, 10))
         : undefined;
       return {
         id: s.id,
