@@ -16,11 +16,13 @@ import type {
   CoreComparisonItem,
   CoreComparisonResponse,
   CoreListEnvelope,
+  CoreMerge,
   CoreOtherStatusesResponse,
   CoreRepo,
   CoreShelf,
   CoreToken,
   FileChange,
+  OpenMerge,
   RepoListEntry,
   ShelfInfo,
 } from './types.js';
@@ -259,6 +261,26 @@ export class CoreApiClient {
     const raw = await this.getCommitRaw(repoId, commitId);
     const base = raw?.parents?.[0] ?? '';
     return this.compare(repoId, base, commitId);
+  }
+
+  // ───── merges ─────
+
+  /**
+   * Merges that stopped on conflicts and are waiting for a human. `dv merge`
+   * returns as soon as the backend parks one of these, so this is the only way
+   * to tell "merged cleanly" from "merged into a pile of conflicts".
+   *
+   * Not paged: the endpoint returns every open merge in the repo, and a repo
+   * with enough unresolved merges to need paging has a bigger problem.
+   */
+  async listOpenMerges(repoId: string): Promise<OpenMerge[]> {
+    const res = await this.get<CoreListEnvelope<CoreMerge>>(`/repos/${enc(repoId)}/merges`);
+    return (res.items ?? []).map((m) => {
+      const merge: OpenMerge = { id: m.id, baseRef: m.base_ref, otherRef: m.other_ref };
+      const who = m.user?.full_name || m.user?.name;
+      if (who) merge.startedBy = who;
+      return merge;
+    });
   }
 
   // ───── shelves ─────

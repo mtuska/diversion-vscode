@@ -214,6 +214,40 @@ describe('CoreApiClient.listShelves', () => {
   });
 });
 
+describe('CoreApiClient.listOpenMerges', () => {
+  it('maps merge refs and the initiating user', async () => {
+    stubFetch([['/merges', {
+      object: 'Merge',
+      items: [{
+        id: 'dv.merge.1',
+        repo_id: REPO,
+        base_ref: 'dv.branch.1',
+        other_ref: 'dv.branch.7',
+        ancestor_commit: 'dv.commit.100',
+        user: { id: 'dv.u.1', full_name: 'Ada Lovelace', name: 'ada' },
+      }],
+    }]]);
+    const client = new CoreApiClient(fakeDaemon(), logger);
+    expect(await client.listOpenMerges(REPO)).toEqual([
+      { id: 'dv.merge.1', baseRef: 'dv.branch.1', otherRef: 'dv.branch.7', startedBy: 'Ada Lovelace' },
+    ]);
+  });
+
+  it('omits startedBy when the API supplies no name, and handles an empty list', async () => {
+    stubFetch([['/merges', {
+      object: 'Merge',
+      items: [{ id: 'dv.merge.2', repo_id: REPO, base_ref: 'main', other_ref: 'feature', user: { id: 'dv.u.1' } }],
+    }]]);
+    const client = new CoreApiClient(fakeDaemon(), logger);
+    expect(await client.listOpenMerges(REPO)).toEqual([
+      { id: 'dv.merge.2', baseRef: 'main', otherRef: 'feature' },
+    ]);
+
+    stubFetch([['/merges', { object: 'Merge' }]]);
+    expect(await new CoreApiClient(fakeDaemon(), logger).listOpenMerges(REPO)).toEqual([]);
+  });
+});
+
 describe('CoreApiClient.listRepos', () => {
   it('marks repos cloned locally using the agent registry', async () => {
     stubFetch([['/repos', {

@@ -16,6 +16,7 @@ import type {
   CommitDetails,
   CommitSummary,
   FileChange,
+  OpenMerge,
   RepoIdentity,
   RepoListEntry,
   ShelfInfo,
@@ -354,8 +355,31 @@ export class Repo {
     });
   }
 
-  async merge(ref: string): Promise<void> {
-    await runDvOrThrow(['merge', safeRef(ref)], { cwd: this.root, dvPath: this.dvPath, timeoutMs: 0 });
+  /**
+   * Merge `ref` into the current branch.
+   *
+   * `conflictResolution` mirrors dv's `--conflict_resolution`. Note the enum
+   * differs from `revert` / `update`: merge takes `keep-destination` where
+   * those take `keep-current`. Left unset, dv parks a conflicting merge
+   * server-side for per-block resolution in the Diversion app — call
+   * {@link listOpenMerges} afterwards to find out whether that happened,
+   * because `dv merge` exits 0 either way.
+   */
+  async merge(
+    ref: string,
+    conflictResolution?: 'manual' | 'keep-destination' | 'accept-incoming',
+  ): Promise<void> {
+    const args = ['merge', safeRef(ref)];
+    if (conflictResolution) args.push('--conflict_resolution', conflictResolution);
+    await runDvOrThrow(args, { cwd: this.root, dvPath: this.dvPath, timeoutMs: 0 });
+  }
+
+  /**
+   * Merges parked on unresolved conflicts. Sourced from the CoreAPI rather
+   * than `dv merge -l` because the CLI's listing is unstructured text.
+   */
+  async listOpenMerges(): Promise<OpenMerge[]> {
+    return this.core.listOpenMerges(this.identity.repoId);
   }
 
   async logOneline(limit = 50): Promise<CommitSummary[]> {

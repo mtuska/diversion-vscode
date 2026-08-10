@@ -144,6 +144,24 @@ export interface ShelfInfo {
   raw: string;
 }
 
+/**
+ * A merge that stalled on conflicts and is waiting for the user. This is a
+ * *server-side* concept and is entirely distinct from the `.dv-conflict`
+ * sidecar files we scan for on disk — those are sync conflicts (the agent
+ * couldn't reconcile a local edit with an incoming change). Conflicting
+ * merges are resolved per block in the Diversion app, not on the filesystem.
+ */
+export interface OpenMerge {
+  /** `dv.merge.<uuid>` — the ID the resolution endpoints are keyed on. */
+  id: string;
+  /** Destination of the merge (branch or workspace ID). */
+  baseRef: string;
+  /** Source being merged in (branch or commit ID). */
+  otherRef: string;
+  /** Display name of whoever started the merge, when the API supplies one. */
+  startedBy?: string;
+}
+
 export interface RepoListEntry {
   name: string;
   /** Stable repo ID, e.g. `dv.repo.<uuid>`. */
@@ -215,6 +233,15 @@ export interface CoreBranch {
   branch_description?: string | null;
   is_deleted?: boolean;
   is_protected?: boolean;
+}
+
+export interface CoreMerge {
+  id: string;
+  repo_id: string;
+  base_ref: string;
+  other_ref: string;
+  ancestor_commit?: string;
+  user?: CoreAuthor;
 }
 
 export interface CoreShelf {

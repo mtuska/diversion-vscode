@@ -151,6 +151,12 @@
         "category": "Diversion"
       },
       {
+        "command": "diversion.showOpenMerges",
+        "title": "Show Unresolved Merges",
+        "category": "Diversion",
+        "icon": "$(git-pull-request)"
+      },
+      {
         "command": "diversion.lockFile",
         "title": "Lock File",
         "category": "Diversion",
@@ -489,6 +495,11 @@
           "command": "diversion.merge",
           "when": "scmProvider == diversion",
           "group": "2_branch@3"
+        },
+        {
+          "command": "diversion.showOpenMerges",
+          "when": "scmProvider == diversion",
+          "group": "2_branch@4"
         },
         {
           "command": "diversion.updateWorkspace",
@@ -1075,7 +1086,7 @@
       {
         "name": "diversion_merge",
         "displayName": "Diversion: Merge Ref",
-        "modelDescription": "Merges the given ref into the currently checked-out branch.",
+        "modelDescription": "Merges the given ref into the currently checked-out branch. On conflicts the merge is parked server-side rather than failing, and the result says so. The conflict strategy here is keep-destination, not keep-current as in diversion_revert_commit.",
         "userDescription": "Merge a ref into the current branch.",
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "dvMerge",
@@ -1086,7 +1097,28 @@
           "required": ["ref"],
           "properties": {
             "repo": { "type": "string" },
-            "ref": { "type": "string", "description": "Branch / tag / commit to merge." }
+            "ref": { "type": "string", "description": "Branch / tag / commit to merge." },
+            "conflictResolution": {
+              "type": "string",
+              "enum": ["manual", "keep-destination", "accept-incoming"],
+              "description": "How to resolve conflicts. Default manual parks the merge for the Diversion app."
+            }
+          }
+        }
+      },
+      {
+        "name": "diversion_open_merges",
+        "displayName": "Diversion: Unresolved Merges",
+        "modelDescription": "Lists merges parked on conflicts, awaiting per-block resolution in the Diversion app. Distinct from .dv-conflict sidecar files, which are sync conflicts on disk and show up in diversion_status.",
+        "userDescription": "List unresolved merges in a Diversion repo.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "dvOpenMerges",
+        "tags": ["diversion", "scm"],
+        "icon": "$(git-pull-request)",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "repo": { "type": "string" }
           }
         }
       },

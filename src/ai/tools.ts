@@ -35,7 +35,11 @@ interface CheckoutArg extends RepoArg {
   discardChanges?: boolean;
   applyShelf?: boolean;
 }
-interface MergeArg extends RepoArg { ref: string }
+interface MergeArg extends RepoArg {
+  ref: string;
+  /** Merge's enum differs from revert/update: `keep-destination`, not `keep-current`. */
+  conflictResolution?: 'manual' | 'keep-destination' | 'accept-incoming';
+}
 interface RevertArg extends CommitIdArg {
   conflictResolution?: 'manual' | 'keep-current' | 'accept-incoming';
 }
@@ -333,8 +337,23 @@ async function checkoutBody(repo: Repo, args: CheckoutArg): Promise<string> {
 
 async function mergeBody(repo: Repo, args: MergeArg): Promise<string> {
   const ref = nonEmpty('ref', args.ref);
-  await repo.merge(ref);
+  await repo.merge(ref, args.conflictResolution);
+  // dv exits 0 whether the merge landed or was parked on conflicts, so the
+  // only honest way to report the outcome is to ask which happened.
+  const parked = await repo.listOpenMerges().catch(() => []);
+  if (parked.length > 0) {
+    return `Merge of "${ref}" stopped on conflicts; ${parked.length} unresolved merge(s). ` +
+      `Conflicting blocks are resolved in the Diversion app, not on disk.`;
+  }
   return `Merged "${ref}" into ${repo.info.branchName || '<branch>'}.`;
+}
+
+async function openMergesBody(repo: Repo): Promise<string> {
+  const merges = await repo.listOpenMerges();
+  if (merges.length === 0) return 'No unresolved merges.';
+  return merges
+    .map((m) => `${m.id}\t${m.otherRef} → ${m.baseRef}${m.startedBy ? `\t(${m.startedBy})` : ''}`)
+    .join('\n');
 }
 
 async function cherryPickBody(repo: Repo, args: CommitIdArg): Promise<string> {
@@ -467,6 +486,7 @@ export function registerLanguageModelTools(
     { name: 'diversion_rename_branch',    factory: () => new FnTool(getRepos, renameBranchBody) },
     { name: 'diversion_checkout',         factory: () => new FnTool(getRepos, checkoutBody) },
     { name: 'diversion_merge',            factory: () => new FnTool(getRepos, mergeBody) },
+    { name: 'diversion_open_merges',      factory: () => new FnTool(getRepos, openMergesBody) },
     { name: 'diversion_cherry_pick',      factory: () => new FnTool(getRepos, cherryPickBody) },
     { name: 'diversion_revert_commit',    factory: () => new FnTool(getRepos, revertCommitBody) },
     { name: 'diversion_revert_to_commit', factory: () => new FnTool(getRepos, revertToCommitBody) },

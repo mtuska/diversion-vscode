@@ -475,6 +475,26 @@ export function registerAllTools(
     }),
   );
 
+  server.registerTool(
+    'dv_open_merges',
+    {
+      title: 'Diversion: list unresolved merges',
+      description:
+        'List merges parked on conflicts, waiting for per-block resolution in the ' +
+        'Diversion app. Distinct from `.dv-conflict` sidecar files, which are sync ' +
+        'conflicts on disk and appear in dv_status.',
+      inputSchema: { ...repoArg },
+      annotations: { readOnlyHint: true },
+    },
+    safe(registry, async (_args, repo) => {
+      const merges = await repo.listOpenMerges();
+      if (merges.length === 0) return text('No unresolved merges.');
+      return text(merges
+        .map((m) => `${m.id}\t${m.otherRef} → ${m.baseRef}${m.startedBy ? `\t(${m.startedBy})` : ''}`)
+        .join('\n'));
+    }),
+  );
+
   // ─── write tools ─────────────────────────────────────────────────────
   // Everything below mutates repository or workspace state. In read-only
   // mode we stop here so none of it is registered or reachable.
@@ -599,15 +619,30 @@ export function registerAllTools(
     'dv_merge',
     {
       title: 'Diversion: merge a ref into the current branch',
-      description: 'Merge the given ref into the currently checked-out branch.',
+      description:
+        'Merge the given ref into the currently checked-out branch. On conflicts the ' +
+        'merge is parked server-side rather than failing, so this reports whether the ' +
+        'merge completed or needs per-block resolution in the Diversion app. Note the ' +
+        'conflict strategy is `keep-destination` here, not `keep-current` as in dv_revert.',
       inputSchema: {
         ...repoArg,
         ref: z.string().describe('Branch / tag / commit to merge into the current branch.'),
+        conflictResolution: z.enum(['manual', 'keep-destination', 'accept-incoming']).optional()
+          .describe('How to resolve conflicts. Default `manual` parks the merge for the app.'),
       },
     },
     safe(registry, async (args, repo) => {
-      await repo.merge(nonEmpty('ref', args.ref));
-      return text(`Merged "${args.ref}" into ${repo.info.branchName || '<branch>'}.`);
+      const ref = nonEmpty('ref', args.ref);
+      await repo.merge(ref, args.conflictResolution);
+      const parked = await repo.listOpenMerges().catch(() => []);
+      if (parked.length > 0) {
+        return text(
+          `Merge of "${ref}" stopped on conflicts; ${parked.length} unresolved merge(s) ` +
+          `(${parked.map((m) => m.id).join(', ')}). Conflicting blocks must be resolved in ` +
+          `the Diversion app — there is no filesystem representation to edit.`,
+        );
+      }
+      return text(`Merged "${ref}" into ${repo.info.branchName || '<branch>'}.`);
     }),
   );
 

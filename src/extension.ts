@@ -21,7 +21,7 @@ import { showLogWebview } from './ui/webviews/log.js';
 import { looksBinary } from './util/binary.js';
 import { isInsideOrEqual } from './util/path.js';
 import { deleteSidecar } from './diversion/repo.js';
-import type { ChangeKind } from './diversion/types.js';
+import type { ChangeKind, OpenMerge } from './diversion/types.js';
 import { registerLanguageModelTools } from './ai/tools.js';
 
 let logger: Logger | undefined;
@@ -197,6 +197,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('diversion.switchBranch', switchBranchCommand),
     vscode.commands.registerCommand('diversion.createBranch', createBranchCommand),
     vscode.commands.registerCommand('diversion.merge', mergeCommand),
+    vscode.commands.registerCommand('diversion.showOpenMerges', showOpenMergesCommand),
     vscode.commands.registerCommand('diversion.lockFile', lockFileCommand),
     vscode.commands.registerCommand('diversion.unlockFile', unlockFileCommand),
     vscode.commands.registerCommand('diversion.listLocks', listLocksCommand),
@@ -612,6 +613,7 @@ async function moreActionsCommand(): Promise<void> {
     { label: '$(git-branch) Switch Branch…', command: 'diversion.switchBranch' },
     { label: '$(add) Create Branch…', command: 'diversion.createBranch' },
     { label: '$(git-merge) Merge Into Current…', command: 'diversion.merge' },
+    { label: '$(git-pull-request) Show Unresolved Merges…', command: 'diversion.showOpenMerges' },
     sep('Sync'),
     { label: '$(sync) Update Workspace', command: 'diversion.updateWorkspace' },
     { label: '$(debug-pause) Pause Sync', command: 'diversion.pauseSync' },
@@ -2081,11 +2083,95 @@ async function mergeCommand(): Promise<void> {
     );
     await provider.refresh();
     updateStatusBar();
-    void vscode.window.showInformationMessage(`Merged ${pick.branchName} into ${current}.`);
+    // `dv merge` exits 0 whether it merged cleanly or parked the merge on
+    // conflicts, so "success" alone doesn't mean the branch actually moved.
+    const parked = await openMergesFor(provider);
+    if (parked.length > 0) {
+      await promptToResolveMerges(provider, parked, `Merge of ${pick.branchName} stopped on conflicts.`);
+    } else {
+      void vscode.window.showInformationMessage(`Merged ${pick.branchName} into ${current}.`);
+    }
   } catch (err) {
-    void vscode.window.showErrorMessage(
-      `Diversion: merge failed (conflicts may need resolving in the web UI): ${(err as Error).message}`,
+    const parked = await openMergesFor(provider);
+    if (parked.length > 0) {
+      await promptToResolveMerges(provider, parked, `Merge of ${pick.branchName} stopped on conflicts.`);
+      return;
+    }
+    void vscode.window.showErrorMessage(`Diversion: merge failed: ${(err as Error).message}`);
+  }
+}
+
+/**
+ * Open (conflicting) merges for a repo, best-effort. Never throws — this runs
+ * on the tail of another operation whose outcome we've already reported, so a
+ * CoreAPI blip must not turn a successful merge into an error toast.
+ */
+async function openMergesFor(provider: DiversionScmProvider): Promise<OpenMerge[]> {
+  try {
+    return await provider.repo.listOpenMerges();
+  } catch (err) {
+    logger?.warn(`[merge] could not list open merges: ${(err as Error).message}`);
+    return [];
+  }
+}
+
+/**
+ * Conflicting merges are resolved block-by-block in the Diversion app — there
+ * is no filesystem representation for us to hand to VS Code's merge editor
+ * (unlike `.dv-conflict` sidecars, which are a different thing entirely). The
+ * useful thing we can do is say so plainly and open the app on the repo.
+ */
+async function promptToResolveMerges(
+  provider: DiversionScmProvider,
+  merges: readonly OpenMerge[],
+  headline: string,
+): Promise<void> {
+  const detail = merges.length === 1
+    ? `${merges[0]!.otherRef} → ${merges[0]!.baseRef}`
+    : `${merges.length} unresolved merges`;
+  const choice = await vscode.window.showWarningMessage(
+    `Diversion: ${headline} Resolve the conflicting blocks in the Diversion app (${detail}).`,
+    'Open in Diversion',
+  );
+  if (choice === 'Open in Diversion') {
+    try {
+      await provider.repo.openInWeb();
+    } catch (err) {
+      void vscode.window.showErrorMessage(`Diversion: could not open the app: ${(err as Error).message}`);
+    }
+  }
+}
+
+async function showOpenMergesCommand(): Promise<void> {
+  const provider = activeProvider();
+  if (!provider) return;
+  let merges: OpenMerge[];
+  try {
+    merges = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Window, title: 'Diversion: checking for unresolved merges' },
+      () => provider.repo.listOpenMerges(),
     );
+  } catch (err) {
+    void vscode.window.showErrorMessage(`Diversion: could not list merges: ${(err as Error).message}`);
+    return;
+  }
+  if (merges.length === 0) {
+    void vscode.window.showInformationMessage('Diversion: no unresolved merges.');
+    return;
+  }
+  const pick = await vscode.window.showQuickPick(
+    merges.map((m) => ({
+      label: `$(git-merge) ${m.otherRef} → ${m.baseRef}`,
+      description: m.startedBy ? `started by ${m.startedBy}` : undefined,
+      detail: m.id,
+    })),
+    { placeHolder: `${merges.length} unresolved merge(s) — pick one to resolve in the Diversion app` },
+  );
+  if (!pick) return;
+  try {
+    await provider.repo.openInWeb();
+  } catch (err) {
+    void vscode.window.showErrorMessage(`Diversion: could not open the app: ${(err as Error).message}`);
   }
 }
 
