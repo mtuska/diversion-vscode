@@ -1,7 +1,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { runDv, runDvOrThrow, type CancellationLike } from './cli.js';
-import { safeRepoPath, safeRef } from './argGuard.js';
+import { safeRepoPath, safeRepoPattern, safeRef } from './argGuard.js';
 import { listFilesRecursive } from '../util/walk.js';
 import { CoreApiClient } from './coreApi.js';
 import { parseStatus, type ParsedStatus } from './parsers/status.js';
@@ -686,6 +686,58 @@ export class Repo {
     await runDvOrThrow(['shelf', 'rename', safeRef(shelf, 'shelf'), safeRef(newName, 'shelf')], {
       cwd: this.root, dvPath: this.dvPath, timeoutMs: 30_000,
     });
+  }
+
+  // ───── revision retention (dv prune) ─────
+  //
+  // Retention rules cap how many revisions of a matching file Diversion
+  // keeps, pruning older ones — effectively a standing `dv obliterate`, so
+  // every write here is irreversible and callers must confirm first.
+  //
+  // We deliberately do NOT parse `dv prune list` into structured rules. Its
+  // table layout is unverified (it needs a Studio/Enterprise repo with rules
+  // already configured to observe), and inventing a regex for a format we've
+  // never seen is how parsers silently start lying. Callers render the lines
+  // as dv printed them; the rule IDs `set`/`remove` need are readable there.
+
+  /** Retention rules, as dv prints them (in priority order, last match wins). */
+  async listPruneRules(): Promise<string[]> {
+    const r = await runDvOrThrow(['prune', 'list'], {
+      cwd: this.root, dvPath: this.dvPath, timeoutMs: 30_000,
+    });
+    return r.stdout.split(/\r?\n/).map((l) => l.trimEnd()).filter((l) => l.trim().length > 0);
+  }
+
+  /**
+   * Add a retention rule. `keep` is 1-999 or 'all' (never prune).
+   * Irreversible for revisions already beyond the limit — confirm first.
+   */
+  async addPruneRule(pattern: string, keep: number | 'all'): Promise<void> {
+    await runDvOrThrow(['prune', 'add', safeRepoPattern(pattern), '--keep', String(keep)], {
+      cwd: this.root, dvPath: this.dvPath, timeoutMs: 60_000,
+    });
+  }
+
+  async setPruneRule(id: string, opts: { keep?: number | 'all'; pattern?: string }): Promise<void> {
+    const args = ['prune', 'set', safeRef(id, 'rule id')];
+    if (opts.keep !== undefined) args.push('--keep', String(opts.keep));
+    if (opts.pattern !== undefined) args.push('--pattern', safeRepoPattern(opts.pattern));
+    if (args.length === 3) throw new Error('setPruneRule: nothing to change (pass keep and/or pattern).');
+    await runDvOrThrow(args, { cwd: this.root, dvPath: this.dvPath, timeoutMs: 60_000 });
+  }
+
+  async removePruneRule(id: string): Promise<void> {
+    await runDvOrThrow(['prune', 'remove', safeRef(id, 'rule id')], {
+      cwd: this.root, dvPath: this.dvPath, timeoutMs: 30_000,
+    });
+  }
+
+  /** Read the repo-wide retention settings, or set case-sensitivity. */
+  async pruneConfig(caseInsensitive?: boolean): Promise<string> {
+    const args = ['prune', 'config'];
+    if (caseInsensitive !== undefined) args.push('--case-insensitive', caseInsensitive ? 'true' : 'false');
+    const r = await runDvOrThrow(args, { cwd: this.root, dvPath: this.dvPath, timeoutMs: 30_000 });
+    return r.stdout.trim();
   }
 
   /** List all hard locks visible to this workspace. Cached briefly. */

@@ -521,6 +521,28 @@ export function registerAllTools(
     }),
   );
 
+  server.registerTool(
+    'dv_revision_limits',
+    {
+      title: 'Diversion: revision-retention rules',
+      description:
+        'Show the repo\'s revision-retention (prune) rules in priority order — last ' +
+        'match wins — plus the repo-wide matching config. Studio/Enterprise only. ' +
+        'Rules are returned as dv prints them. Changing them permanently deletes ' +
+        'revisions, so that is left to the user in the editor.',
+      inputSchema: { ...repoArg },
+      annotations: { readOnlyHint: true },
+    },
+    safe(registry, async (_args, repo) => {
+      const [rules, config] = await Promise.all([
+        repo.listPruneRules(),
+        repo.pruneConfig().catch(() => ''),
+      ]);
+      const lines = rules.length > 0 ? rules : ['(no retention rules configured)'];
+      return text([config, '', ...lines].filter((l) => l !== undefined).join('\n').trim());
+    }),
+  );
+
   // ─── write tools ─────────────────────────────────────────────────────
   // Everything below mutates repository or workspace state. In read-only
   // mode we stop here so none of it is registered or reachable.

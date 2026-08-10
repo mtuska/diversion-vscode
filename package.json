@@ -287,6 +287,12 @@
         "icon": "$(tag)"
       },
       {
+        "command": "diversion.revisionLimits",
+        "title": "Revision Limits...",
+        "category": "Diversion",
+        "icon": "$(database)"
+      },
+      {
         "command": "diversion.compareWithCommit",
         "title": "Compare with...",
         "category": "Diversion"

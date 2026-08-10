@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as path from 'node:path';
-import { safeRepoPath, safeRef } from '../../src/diversion/argGuard';
+import { safeRepoPath, safeRepoPattern, safeRef } from '../../src/diversion/argGuard';
 
 const ROOT = path.sep === '\\' ? 'C:\\repo' : '/repo';
 
@@ -48,5 +48,27 @@ describe('safeRef', () => {
 
   it('rejects an empty ref with the kind in the message', () => {
     expect(() => safeRef('  ', 'shelf')).toThrow(/Empty shelf operand/);
+  });
+});
+
+describe('safeRepoPattern', () => {
+  it('preserves glob metacharacters — patterns are not filesystem paths', () => {
+    expect(safeRepoPattern('/Assets/*.psd')).toBe('/Assets/*.psd');
+    expect(safeRepoPattern('/Content/**/?.uasset')).toBe('/Content/**/?.uasset');
+  });
+
+  it('trims surrounding whitespace', () => {
+    expect(safeRepoPattern('  /Binaries/*  ')).toBe('/Binaries/*');
+  });
+
+  // `./`-prefixing (what safeRepoPath does) would change what a root-anchored
+  // glob matches, so a flag-looking pattern is rejected rather than rewritten.
+  it('rejects a pattern that would parse as a flag', () => {
+    expect(() => safeRepoPattern('--keep')).toThrow(/looks like a flag/);
+    expect(() => safeRepoPattern('-x')).toThrow(/looks like a flag/);
+  });
+
+  it('rejects an empty pattern', () => {
+    expect(() => safeRepoPattern('   ')).toThrow(/Empty pattern/);
   });
 });

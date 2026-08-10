@@ -35,6 +35,23 @@ export function safeRepoPath(root: string, p: string): string {
  * `-`, which would otherwise let the value be parsed as a dv flag (argument
  * injection). Empty values are rejected too.
  */
+/**
+ * Validate a repo-root-anchored glob (retention-rule patterns). Unlike
+ * {@link safeRepoPath} these are not resolved against the filesystem — `*`
+ * and `?` are meaningful and the pattern names files that may not exist — so
+ * the only check that applies is flag neutralization. A leading `-` is
+ * rejected outright rather than `./`-prefixed, because prefixing would change
+ * which paths the glob anchors to.
+ */
+export function safeRepoPattern(pattern: string): string {
+  const trimmed = pattern.trim();
+  if (!trimmed) throw new Error('Empty pattern operand.');
+  if (trimmed.startsWith('-')) {
+    throw new Error(`Refusing pattern that looks like a flag: "${pattern}"`);
+  }
+  return trimmed;
+}
+
 export function safeRef(ref: string, kind = 'ref'): string {
   const trimmed = ref.trim();
   if (!trimmed) throw new Error(`Empty ${kind} operand.`);

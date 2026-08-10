@@ -204,6 +204,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('diversion.merge', mergeCommand),
     vscode.commands.registerCommand('diversion.showOpenMerges', showOpenMergesCommand),
     vscode.commands.registerCommand('diversion.resolveMergeConflicts', resolveMergeConflictsCommand),
+    vscode.commands.registerCommand('diversion.revisionLimits', revisionLimitsCommand),
     vscode.commands.registerCommand('diversion.submitMergeResolution', submitMergeResolutionCommand),
     vscode.commands.registerCommand('diversion.lockFile', lockFileCommand),
     vscode.commands.registerCommand('diversion.unlockFile', unlockFileCommand),
@@ -638,6 +639,7 @@ async function moreActionsCommand(): Promise<void> {
     { label: '$(globe) Open in Web UI', command: 'diversion.openInWeb' },
     { label: '$(eye) Toggle Blame (Annotation)', command: 'diversion.toggleBlame' },
     { label: '$(verified) Verify Repository Integrity', command: 'diversion.verify' },
+    { label: '$(database) Revision Limits…', command: 'diversion.revisionLimits' },
     { label: '$(server) Show Daemon Health', command: 'diversion.daemonHealth' },
     { label: '$(watch) Run Performance Trace', command: 'diversion.perfTrace' },
     { label: '$(output) Show Output Channel', command: 'diversion.showOutput' },
@@ -2342,6 +2344,151 @@ async function promptToResolveMerges(
       void vscode.window.showErrorMessage(`Diversion: could not open the app: ${(err as Error).message}`);
     }
   }
+}
+
+/**
+ * Revision limits (`dv prune`). Rules cap how many revisions of matching
+ * files Diversion retains — a standing `dv obliterate` — so every mutation
+ * here is irreversible and gated behind a modal confirm.
+ *
+ * Rules are shown exactly as dv prints them rather than parsed into a table:
+ * the layout is unverified, and the rule IDs `set`/`remove` need are legible
+ * in the raw output anyway.
+ */
+async function revisionLimitsCommand(): Promise<void> {
+  const provider = activeProvider();
+  if (!provider) return;
+  const repo = provider.repo;
+
+  let rules: string[];
+  let config: string;
+  try {
+    [rules, config] = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Window, title: 'dv prune list' },
+      () => Promise.all([repo.listPruneRules(), repo.pruneConfig().catch(() => '')]),
+    );
+  } catch (err) {
+    void vscode.window.showErrorMessage(`Diversion: ${(err as Error).message}`);
+    return;
+  }
+
+  type Item = vscode.QuickPickItem & { action?: 'add' | 'set' | 'remove' | 'case' };
+  const sep = (label: string): Item => ({ label, kind: vscode.QuickPickItemKind.Separator });
+  const items: Item[] = [sep(config || 'Current rules')];
+  for (const line of rules) items.push({ label: line, description: '' });
+  items.push(
+    sep('Actions'),
+    { label: '$(add) Add Rule…', action: 'add' },
+    { label: '$(edit) Edit Rule…', action: 'set' },
+    { label: '$(trash) Remove Rule…', action: 'remove' },
+    { label: '$(case-sensitive) Toggle Case-Insensitive Matching', action: 'case' },
+  );
+
+  const pick = await vscode.window.showQuickPick(items, {
+    placeHolder: rules.length > 0 ? 'Retention rules — last match wins' : 'No retention rules configured',
+  });
+  if (!pick?.action) return;
+
+  try {
+    switch (pick.action) {
+      case 'add': {
+        const pattern = await vscode.window.showInputBox({
+          title: 'Retention rule pattern',
+          prompt: 'Repository-root-anchored glob',
+          placeHolder: '/Assets/*.psd',
+          validateInput: (s) => s.trim() ? undefined : 'Pattern required',
+        });
+        if (!pattern) return;
+        const keep = await promptKeep();
+        if (keep === undefined) return;
+        const ok = await vscode.window.showWarningMessage(
+          `Keep only ${keep} revision(s) of files matching ${pattern.trim()}?`,
+          {
+            modal: true,
+            detail: 'Revisions beyond the limit are permanently deleted from blob storage. This cannot be undone.',
+          },
+          'Add Rule',
+        );
+        if (ok !== 'Add Rule') return;
+        await repo.addPruneRule(pattern.trim(), keep);
+        void vscode.window.showInformationMessage(`Retention rule added for ${pattern.trim()}.`);
+        break;
+      }
+      case 'set': {
+        const id = await promptRuleId('Edit which rule?');
+        if (!id) return;
+        const pattern = await vscode.window.showInputBox({
+          title: `New pattern for rule ${id} (leave blank to keep)`,
+          placeHolder: '/Assets/*.psd',
+        });
+        if (pattern === undefined) return;
+        const keep = await promptKeep(true);
+        if (keep === undefined && !pattern.trim()) return;
+        const opts: { keep?: number | 'all'; pattern?: string } = {};
+        if (keep !== undefined) opts.keep = keep;
+        if (pattern.trim()) opts.pattern = pattern.trim();
+        const ok = await vscode.window.showWarningMessage(
+          `Update rule ${id}?`,
+          { modal: true, detail: 'Lowering a limit permanently deletes revisions beyond it.' },
+          'Update Rule',
+        );
+        if (ok !== 'Update Rule') return;
+        await repo.setPruneRule(id, opts);
+        void vscode.window.showInformationMessage(`Rule ${id} updated.`);
+        break;
+      }
+      case 'remove': {
+        const id = await promptRuleId('Remove which rule?');
+        if (!id) return;
+        const ok = await vscode.window.showWarningMessage(
+          `Remove retention rule ${id}?`,
+          { modal: true, detail: 'Already-pruned revisions are not restored.' },
+          'Remove Rule',
+        );
+        if (ok !== 'Remove Rule') return;
+        await repo.removePruneRule(id);
+        void vscode.window.showInformationMessage(`Rule ${id} removed.`);
+        break;
+      }
+      case 'case': {
+        const next = !/true/i.test(config);
+        await repo.pruneConfig(next);
+        void vscode.window.showInformationMessage(
+          `Case-insensitive rule matching ${next ? 'enabled' : 'disabled'}.`,
+        );
+        break;
+      }
+    }
+  } catch (err) {
+    void vscode.window.showErrorMessage(`Diversion: ${(err as Error).message}`);
+  }
+}
+
+async function promptKeep(optional = false): Promise<number | 'all' | undefined> {
+  const raw = await vscode.window.showInputBox({
+    title: optional ? 'Revisions to keep (leave blank to keep current)' : 'Revisions to keep',
+    prompt: "A number from 1 to 999, or 'all' to never prune",
+    placeHolder: '10',
+    validateInput: (s) => {
+      const t = s.trim();
+      if (!t) return optional ? undefined : 'Required';
+      if (t.toLowerCase() === 'all') return undefined;
+      const n = Number(t);
+      return Number.isInteger(n) && n >= 1 && n <= 999 ? undefined : "1-999, or 'all'";
+    },
+  });
+  if (raw === undefined) return undefined;
+  const t = raw.trim();
+  if (!t) return undefined;
+  return t.toLowerCase() === 'all' ? 'all' : Number(t);
+}
+
+function promptRuleId(title: string): Thenable<string | undefined> {
+  return vscode.window.showInputBox({
+    title,
+    prompt: 'Rule ID, as shown in the list above',
+    validateInput: (s) => s.trim() ? undefined : 'Rule ID required',
+  }).then((s) => s?.trim() || undefined);
 }
 
 async function resolveMergeConflictsCommand(): Promise<void> {
