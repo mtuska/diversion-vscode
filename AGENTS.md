@@ -7,7 +7,7 @@ making changes; the file is short on purpose.
 
 A VS Code extension that registers [Diversion](https://www.diversion.dev)
 as a first-class SCM provider. TypeScript, bundled with esbuild,
-targets VS Code ≥ 1.93. Coexists with the built-in Git provider.
+targets VS Code ≥ 1.95. Coexists with the built-in Git provider.
 
 The extension is **not** a Diversion-Inc product — it talks to Diversion's
 documented local agent (the `dv` daemon's HTTP surface) and the `dv` CLI
@@ -35,7 +35,7 @@ happened to have open in the dev host.
 src/
   extension.ts          Activation, scanning workspace folders, command wiring,
                         editor-event fast paths (save/create/delete/rename).
-                        ~1700 LOC; commands live here as top-level functions.
+                        ~2100 LOC; commands live here as top-level functions.
   diversion/
     daemon.ts           HTTP client for the local dv sync agent (AgentAPI).
                         Endpoints: /health, /workspaces, /workspace?abs_path,
@@ -94,9 +94,10 @@ src/
                         case-insensitivity / symlink-canonicalised home dirs.
     walk.ts, log.ts, binary.ts
 test/unit/              Vitest. Parser-heavy.
-unreal/                 (Untracked) Reference copy of Diversion's Unreal
-                        plugin for OpenAPI inspection. **Never commit this.**
-                        Don't add it to .gitignore either.
+unreal_plugin/          (Gitignored) Reference copy of Diversion's Unreal
+                        plugin — the OpenAPI specs for AgentAPI + CoreAPI
+                        and real first-party call sequences. Best source
+                        of truth when an API behaves unexpectedly.
 ```
 
 ## Activation flow
@@ -141,23 +142,46 @@ decoration-change events for them. We don't rely on VS Code's
 `propagate: true` alone because it only propagates to ancestors VS Code
 has already queried — collapsed folders never get badges that way.
 
-## CLI vs AgentAPI: which to use for new work
+## Which of the three backends to use for new work
 
-Prefer **AgentAPI (HTTP, no auth, local)** for anything that's about the
-agent's own state:
+We talk to Diversion three ways. Pick by what the data *is*, not by
+what's easiest to call.
+
+**AgentAPI** (`daemon.ts` — local HTTP, no auth) for anything about the
+local agent's own state:
 
 - workspace identity / sync status / sync progress / file-sync status
 - workspace-by-path lookup (one round trip, no client-side scan)
 - nudging the agent to re-scan (`notifySyncRequired`)
 
-Use **`dv` CLI** for anything the AgentAPI doesn't expose: branches,
-tags, shelves, locks, log, blame, merge, commit, reset, revert, update,
-init.
+**CoreAPI** (`coreApi.ts` — `api.diversion.dev`, bearer token) for cloud
+reads: branches, log / commit details, ref-to-ref compare, shelves,
+repos, per-file history. Since v0.6.0 this is the source of truth for
+reads, replacing text-parsing the CLI. Auth is delegated to the local
+agent (`GET /token/core` mints a short-lived bearer) — we never handle
+the user's credentials ourselves, and the token stays in memory only.
 
-**Do not** introduce calls to `api.diversion.dev` (CoreAPI). It's
-JWT-authenticated against Diversion's cloud and we're not a registered
-client. The trade-off is documented in the v0.3.x → v0.4.0 design notes
-in commit history.
+> Older revisions of this file said "do not call the CoreAPI, we're not
+> a registered client." That is obsolete: the agent mints us a token, so
+> no client registration is involved. Don't re-litigate it.
+
+**`dv` CLI** (`cli.ts`) for **every write** — commit, reset, revert,
+merge, checkout, branch/tag/shelf mutation, locks — plus the handful of
+reads with no CoreAPI equivalent (locks, blame). Writes stay on the CLI
+so the local agent keeps sync state authoritative.
+
+Two hard rules that survive all of the above:
+
+- **The status hot path stays local.** `Repo.getState()` sources the
+  changelist from `dv status` + `dv diff --name-status`, never the
+  CoreAPI `get_status` endpoint — the cloud's view lags a local edit by
+  a sync roundtrip and paginates at 1500 with a truncation flag. A file
+  the user just edited must appear in the SCM panel *now*.
+- **`dv` blocks on stdin prompts** and does not detect a non-TTY. Any
+  subcommand with a confirmation prompt needs its skip-flag (`reset -f`,
+  `checkout --ignore-shelf`, `shelf apply -f`). `cli.ts` closes stdin on
+  every spawn as a backstop, but the flag is still the right fix — EOF
+  makes dv fail, the flag makes it succeed.
 
 ## Commands
 
@@ -206,9 +230,7 @@ command can be triggered from multiple menu locations.
   with `- ` for multiple distinct changes; sub-headings for unrelated
   tracks of work. Never run-on prose like "Also: ..., ..., ...".
 - Co-author trailer: `Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>`
-- Stage files explicitly. **Never** `git add -A` / `git add .` — the
-  `unreal/` folder is locally-present reference material we never want
-  to commit, and it is intentionally not in `.gitignore`.
+- Stage files explicitly. **Never** `git add -A` / `git add .`.
 
 **Versioning**
 
@@ -224,7 +246,7 @@ command can be triggered from multiple menu locations.
 
 - `npm run typecheck` — must pass. Strict mode, no errors tolerated.
 - `npm test` — Vitest unit tests (CoreAPI mappers + remaining parsers).
-  ~46 tests, all should pass.
+  ~90 tests, all should pass.
 - No mandatory lint step today; if you add one, also wire it into CI.
 
 **Don't surprise the user**
@@ -287,7 +309,14 @@ Both must declare the same name. Tools are read-only by convention.
 - **`dv`'s text output is the unstable surface.** When something parses
   oddly, look at the parser fixtures and the actual dv version on disk
   (`dv --version`). Diversion ships frequently and minor format shifts
-  happen.
+  happen. Our parsers are also English-dependent (`In repo`, `On branch`,
+  `No active locks`, and `looksLikeError`'s `/^Error:/`) — the desktop app
+  is now localized, and if the CLI follows, `looksLikeError` silently
+  returning false would turn failures into successes. Prefer `--json`
+  where dv offers it.
+- **`dv --help` does not list every command.** `verify`, `ls`, `mv`, `rm`,
+  `mkdir`, `review`, and `version` are all real but hidden. Check
+  `dv help <cmd>` before concluding something doesn't exist.
 - **Daemon eventual consistency.** `dv commit` returns before the agent's
   registry reflects the new commitId. `commitCommand` polls
   `refreshIdentity()` for up to 2s; don't undo that or the SCM Graph
@@ -301,11 +330,12 @@ Both must declare the same name. Tools are read-only by convention.
   changed file in the repo gets a decoration entry; the panel listing
   is filtered. This is intentional — the explorer used to be empty
   outside the open subfolder.
-- **`unreal/` exists locally as reference material** (the official
-  Unreal plugin's source, including its OpenAPI yaml for AgentAPI). It
-  must stay untracked AND must not be in `.gitignore` (the user wants
-  the `?? unreal/` line to keep showing up in `git status` as a tactile
-  reminder). Always stage files explicitly when committing.
+- **`unreal_plugin/` exists locally as reference material** (the official
+  Unreal plugin's source, including the OpenAPI yaml for both APIs). It's
+  gitignored, so don't rely on it being present in CI or a fresh clone —
+  and grep it before guessing at Diversion API behavior. Note the specs
+  lag the live API by months: several live endpoints (`/token/core`) are
+  commented out in them, and recent additions are absent entirely.
 - **VS Code's FileDecorationProvider doesn't auto-propagate to collapsed
   parents.** Compute ancestor decorations explicitly. See
   `computeAncestors` and `ancestorDecoration` in
