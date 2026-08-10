@@ -280,8 +280,7 @@ In multi-repo workspaces every tool accepts an optional `repo` argument (repo na
 
 - Selective sync editor (`dv preferences sync_paths_rules`).
 - Workspace switcher (multiple workspaces of the same repo).
-- Tag UI in the VS Code panel (list / create / checkout). MCP / Copilot Chat already covers it.
-- Review status — Diversion's review/PR system lives in the cloud and isn't exposed via `dv` or the local agent; we don't call `api.diversion.dev` directly.
+- Review requests — `dv review` can open one, but there's no endpoint to read review state back, so there's nothing to render.
 - Multi-lane DAG layout in the graph (currently linear-with-merge-markers).
 - There is **no** Push or Pull — Diversion auto-syncs commits. This is by design, not an oversight.
 
@@ -361,9 +360,11 @@ For the v0.1 design rationale, mapping of VS Code SCM concepts to `dv` commands,
 ## Hard rules baked into the UX
 
 - Never invent CLI flags. Every flag is verified against `dv help <cmd>`.
-- Never assume git semantics. No push, no pull, no inline merge-conflict markers.
+- Never assume git semantics. No push, no pull. (Conflict markers are the one borrowed idea — they're how VS Code's built-in per-block resolution UI is driven, not how Diversion stores conflicts.)
 - Always parse `dv` output through small, fixture-backed parsers — never a single mega-regex.
-- Never call `api.diversion.dev` (CoreAPI). It's JWT-authenticated against Diversion's cloud and we aren't a registered client. Everything goes through the local agent (no auth) or the `dv` CLI.
+- Never invent an auth flow. The CoreAPI bearer is minted by the local agent and kept in memory only — we never handle the user's credentials.
+- Writes go through the `dv` CLI so the local agent stays authoritative on sync state. The sole exception is merge-conflict resolution, which has no CLI equivalent.
+- Never assume `dv` detects a non-TTY. Pass the skip-flag on anything that prompts, or it hangs forever.
 
 ## License
 

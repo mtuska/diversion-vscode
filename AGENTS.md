@@ -9,11 +9,11 @@ A VS Code extension that registers [Diversion](https://www.diversion.dev)
 as a first-class SCM provider. TypeScript, bundled with esbuild,
 targets VS Code ≥ 1.95. Coexists with the built-in Git provider.
 
-The extension is **not** a Diversion-Inc product — it talks to Diversion's
-documented local agent (the `dv` daemon's HTTP surface) and the `dv` CLI
-on the user's machine. We **do not** call Diversion's cloud API directly
-(`api.diversion.dev`) because that requires being a registered client,
-and we aren't.
+The extension is **not** a Diversion-Inc product. It talks to three
+things on the user's machine and account: the local agent's HTTP surface,
+the `dv` CLI, and the cloud CoreAPI (`api.diversion.dev`) using a
+short-lived token the local agent mints for us. See "Which of the three
+backends to use" below for what each one owns.
 
 ## ⚠️ Two source-control systems live here, don't confuse them
 
