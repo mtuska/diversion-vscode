@@ -66,3 +66,33 @@ describe('runDv output cap', () => {
     ).rejects.toThrow(/more than 100 bytes/);
   });
 });
+
+// dv does not detect a non-TTY: it prompts for confirmation on several
+// subcommands and blocks forever if stdin stays open. Since those calls run
+// with no timeout, a blocked child never settles its promise and permanently
+// holds a semaphore slot. The runner must always deliver EOF.
+describe('runDv stdin handling', () => {
+  const nodeOpts = { cwd: process.cwd(), dvPath: 'node' as string };
+  // Reads stdin to EOF. If stdin is never closed this never resolves and the
+  // test times out — which is exactly the production hang we're guarding.
+  const READ_STDIN =
+    'let b="";process.stdin.on("data",c=>b+=c);' +
+    'process.stdin.on("end",()=>process.stdout.write("eof:"+b))';
+
+  it('closes stdin when no payload is supplied', async () => {
+    const r = await runDv(['-e', READ_STDIN], { ...nodeOpts, timeoutMs: 5_000 });
+    expect(r.stdout).toBe('eof:');
+    expect(r.exitCode).toBe(0);
+  });
+
+  it('still delivers a stdin payload before closing', async () => {
+    const r = await runDv(['-e', READ_STDIN], { ...nodeOpts, timeoutMs: 5_000, stdin: 'payload' });
+    expect(r.stdout).toBe('eof:payload');
+  });
+
+  it('does not blow up when the child exits without reading stdin', async () => {
+    const r = await runDv(['-e', 'process.stdout.write("done")'], { ...nodeOpts, timeoutMs: 5_000 });
+    expect(r.stdout).toBe('done');
+    expect(r.exitCode).toBe(0);
+  });
+});

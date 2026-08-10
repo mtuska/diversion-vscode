@@ -1053,7 +1053,7 @@
       {
         "name": "diversion_checkout",
         "displayName": "Diversion: Checkout Ref",
-        "modelDescription": "Checks out a branch, tag, or commit. Set takeChanges / shelveChanges / discardChanges to control what happens to uncommitted working-tree changes (only one may be true).",
+        "modelDescription": "Checks out a branch, tag, or commit. Set takeChanges / shelveChanges / discardChanges to control what happens to uncommitted working-tree changes (only one may be true). Shelved changes on the target branch stay shelved unless applyShelf is true.",
         "userDescription": "Check out a ref in a Diversion repo.",
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "dvCheckout",
@@ -1067,7 +1067,8 @@
             "ref": { "type": "string", "description": "Branch name, tag, or commit ID." },
             "takeChanges": { "type": "boolean" },
             "shelveChanges": { "type": "boolean" },
-            "discardChanges": { "type": "boolean" }
+            "discardChanges": { "type": "boolean" },
+            "applyShelf": { "type": "boolean", "description": "Un-shelve the target branch's shelved changes after checkout." }
           }
         }
       },

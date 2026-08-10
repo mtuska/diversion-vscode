@@ -256,7 +256,17 @@ function spawnDv(args: readonly string[], opts: DvRunOptions): Promise<DvResult>
       });
     });
 
-    if (opts.stdin !== undefined && child.stdin) {
+    // Close stdin unconditionally. `dv` does not detect a non-TTY: several
+    // subcommands prompt for confirmation (`reset` without -f, `checkout` when
+    // the target branch has shelved changes, `merge` on conflicts) and, with an
+    // open pipe, block forever waiting on an answer nobody can give. Because
+    // those calls run with `timeoutMs: 0`, the promise never settles and the
+    // process permanently holds one of the dv semaphore's few slots. EOF makes
+    // dv fail fast instead. The stdin error handler swallows the EPIPE we'd
+    // otherwise get when the child has already exited — an unhandled 'error'
+    // on the stream would take down the extension host.
+    if (child.stdin) {
+      child.stdin.on('error', () => { /* child gone; nothing to write anyway */ });
       child.stdin.end(opts.stdin);
     }
   });

@@ -33,6 +33,7 @@ interface CheckoutArg extends RepoArg {
   takeChanges?: boolean;
   shelveChanges?: boolean;
   discardChanges?: boolean;
+  applyShelf?: boolean;
 }
 interface MergeArg extends RepoArg { ref: string }
 interface RevertArg extends CommitIdArg {
@@ -316,10 +317,16 @@ async function createBranchBody(repo: Repo, args: CreateBranchArg): Promise<stri
 
 async function checkoutBody(repo: Repo, args: CheckoutArg): Promise<string> {
   const ref = nonEmpty('ref', args.ref);
-  const opts: { takeChanges?: boolean; shelveChanges?: boolean; discardChanges?: boolean } = {};
+  const opts: {
+    takeChanges?: boolean;
+    shelveChanges?: boolean;
+    discardChanges?: boolean;
+    applyShelf?: boolean;
+  } = {};
   if (args.takeChanges) opts.takeChanges = true;
   if (args.shelveChanges) opts.shelveChanges = true;
   if (args.discardChanges) opts.discardChanges = true;
+  if (args.applyShelf) opts.applyShelf = true;
   await repo.checkout(ref, opts);
   return `Checked out "${ref}".`;
 }

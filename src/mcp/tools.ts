@@ -565,22 +565,31 @@ export function registerAllTools(
       description:
         'Check out a branch, tag, or commit. Use `takeChanges` / `shelveChanges` / ' +
         '`discardChanges` to control what happens to uncommitted working-tree changes ' +
-        '(only one may be true).',
+        '(only one may be true). Shelved changes on the target branch are left ' +
+        'shelved unless `applyShelf` is true.',
       inputSchema: {
         ...repoArg,
         ref: z.string().describe('Branch name, tag, or commit ID.'),
         takeChanges: z.boolean().optional(),
         shelveChanges: z.boolean().optional(),
         discardChanges: z.boolean().optional(),
+        applyShelf: z.boolean().optional()
+          .describe('Un-shelve the target branch\'s shelved changes after checkout.'),
       },
       annotations: { destructiveHint: true },
     },
     safe(registry, async (args, repo) => {
       const ref = nonEmpty('ref', args.ref);
-      const opts: { takeChanges?: boolean; shelveChanges?: boolean; discardChanges?: boolean } = {};
+      const opts: {
+        takeChanges?: boolean;
+        shelveChanges?: boolean;
+        discardChanges?: boolean;
+        applyShelf?: boolean;
+      } = {};
       if (args.takeChanges) opts.takeChanges = true;
       if (args.shelveChanges) opts.shelveChanges = true;
       if (args.discardChanges) opts.discardChanges = true;
+      if (args.applyShelf) opts.applyShelf = true;
       await repo.checkout(ref, opts);
       return text(`Checked out "${ref}".`);
     }),

@@ -328,15 +328,27 @@ export class Repo {
     await runDvOrThrow(args, { cwd: this.root, dvPath: this.dvPath, timeoutMs: 0 });
   }
 
+  /**
+   * Switch the workspace to a branch / commit / tag.
+   *
+   * One of the change-handling flags is always sent by our callers, but the
+   * *shelf* question is separate: when the target branch has previously-shelved
+   * changes, `dv checkout` prompts unless told otherwise. We default to
+   * `--ignore-shelf` because a prompt we cannot answer hangs the call (see the
+   * stdin note in cli.ts). Ignoring is non-destructive — the shelf survives and
+   * stays visible in the Shelves view — so callers opt *in* to applying it.
+   */
   async checkout(ref: string, opts: {
     takeChanges?: boolean;
     shelveChanges?: boolean;
     discardChanges?: boolean;
+    applyShelf?: boolean;
   } = {}): Promise<void> {
     const flags: string[] = [];
     if (opts.takeChanges) flags.push('--take-changes');
     if (opts.shelveChanges) flags.push('--shelve-changes');
     if (opts.discardChanges) flags.push('--discard-changes');
+    flags.push(opts.applyShelf ? '--apply-shelf' : '--ignore-shelf');
     await runDvOrThrow(['checkout', safeRef(ref), ...flags], {
       cwd: this.root, dvPath: this.dvPath, timeoutMs: 0,
     });
