@@ -293,23 +293,34 @@ export class DiversionScmProvider implements vscode.Disposable {
   /**
    * A cheap deterministic fingerprint of everything that affects the rendered
    * SCM view: the ordered change list, the conflict set, which paths are
-   * staged, the open-folder filter, and the current tip. Two refreshes with
-   * the same signature render identically, so the second can be skipped.
+   * staged, the open-folder filter, the current tip, and the sync flags shown
+   * on the title pill. Two refreshes with the same signature render
+   * identically, so the second can be skipped.
+   *
+   * Anything the render reads must appear here. `paused` / `readOnly` are in
+   * the list because the early-out sits in front of `updateTitleButtons()` —
+   * without them, pause/resume left a stale badge and tooltip on the branch
+   * pill while the status bar (refreshed by a separate path) said otherwise.
    */
   private computeSignature(state: {
     changes: readonly FileChange[];
-    conflicts: readonly { originalPath: string }[];
+    conflicts: readonly { originalPath: string; sidecarPath: string }[];
   }): string {
     const parts: string[] = [
       `h:${this.repo.info.commitId}`,
       `b:${this.repo.info.branchName}`,
+      `p:${this.repo.info.paused ? 1 : 0}`,
+      `r:${this.repo.info.readOnly ? 1 : 0}`,
       `f:${this.openFolders.join(',')}`,
       `s:${[...this.stagedPaths].sort().join(',')}`,
     ];
     for (const c of state.changes) {
       parts.push(`${c.kind}\t${c.path}\t${c.fromPath ?? ''}`);
     }
-    for (const c of state.conflicts) parts.push(`x\t${c.originalPath}`);
+    // Include the sidecar, not just the original: numbered conflicts
+    // (file.dv-conflict-2.txt) share an original path, so keying on the
+    // original alone makes a second conflict on the same file invisible.
+    for (const c of state.conflicts) parts.push(`x\t${c.originalPath}\t${c.sidecarPath}`);
     return parts.join('\n');
   }
 
