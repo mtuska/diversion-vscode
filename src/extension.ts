@@ -245,6 +245,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('diversion.resolveMergeConflicts', resolveMergeConflictsCommand),
     vscode.commands.registerCommand('diversion.revisionLimits', revisionLimitsCommand),
     vscode.commands.registerCommand('diversion.showClashes', showClashesCommand),
+    vscode.commands.registerCommand('diversion.createReview', createReviewCommand),
     vscode.commands.registerCommand('diversion.submitMergeResolution', submitMergeResolutionCommand),
     vscode.commands.registerCommand('diversion.lockFile', lockFileCommand),
     vscode.commands.registerCommand('diversion.unlockFile', unlockFileCommand),
@@ -668,6 +669,7 @@ async function moreActionsCommand(): Promise<void> {
     { label: '$(git-branch) Switch Branch…', command: 'diversion.switchBranch' },
     { label: '$(add) Create Branch…', command: 'diversion.createBranch' },
     { label: '$(git-merge) Merge Into Current…', command: 'diversion.merge' },
+    { label: '$(git-pull-request-create) Open Review Request…', command: 'diversion.createReview' },
     { label: '$(git-pull-request) Show Unresolved Merges…', command: 'diversion.showOpenMerges' },
     { label: '$(merge) Resolve Merge Conflicts…', command: 'diversion.resolveMergeConflicts' },
     sep('Sync'),
@@ -2366,6 +2368,25 @@ async function mergeCommand(): Promise<void> {
   });
   if (!pick) return;
 
+  // A conflicting merge parks server-side and turns into real resolution
+  // work, so it's worth one step to look first.
+  const go = await vscode.window.showQuickPick(
+    [
+      { label: `$(git-merge) Merge ${pick.branchName} into ${current}`, action: 'merge' as const },
+      { label: '$(globe) Preview in browser first', action: 'preview' as const },
+    ],
+    { placeHolder: `Merge ${pick.branchName} → ${current}?` },
+  );
+  if (!go) return;
+  if (go.action === 'preview') {
+    try {
+      await provider.repo.mergePreview(pick.branchName, current);
+    } catch (err) {
+      void vscode.window.showErrorMessage(`Diversion: merge preview failed: ${(err as Error).message}`);
+    }
+    return;
+  }
+
   try {
     await vscode.window.withProgress(
       { location: vscode.ProgressLocation.SourceControl, title: `dv merge ${pick.branchName}` },
@@ -2641,6 +2662,66 @@ async function showClashesCommand(): Promise<void> {
     void vscode.window.showInformationMessage(
       `Diversion: ${pick.clash.path} isn't in your workspace yet — ${pick.clash.author} has it in flight.`,
     );
+  }
+}
+
+/**
+ * Open a review request for the current branch — Diversion's pull-request
+ * equivalent. There's no endpoint to read review state back, so this is
+ * create-only; the app is where reviews get read and acted on.
+ */
+async function createReviewCommand(): Promise<void> {
+  const provider = activeProvider();
+  if (!provider) return;
+  const branch = provider.repo.info.branchName;
+  if (!branch) {
+    void vscode.window.showInformationMessage('Diversion: no current branch.');
+    return;
+  }
+
+  const title = await vscode.window.showInputBox({
+    title: `Review request for ${branch}`,
+    prompt: 'Title',
+    validateInput: (s) => s.trim() ? undefined : 'Title required',
+  });
+  if (!title) return;
+  const description = await vscode.window.showInputBox({
+    title: 'Description (optional)',
+    prompt: 'What should reviewers know?',
+  });
+  if (description === undefined) return;
+
+  // Target defaults to the repo's default branch on dv's side; offering the
+  // branch list lets the user retarget without guessing the flag.
+  let into: string | undefined;
+  try {
+    const branches = (await provider.repo.listBranches()).filter((b) => b.name !== branch);
+    const pick = await vscode.window.showQuickPick(
+      [
+        { label: '$(check) Repository default branch', branchName: undefined },
+        ...branches.map((b) => ({ label: `$(git-branch) ${b.name}`, branchName: b.name })),
+      ],
+      { placeHolder: 'Merge the review into…' },
+    );
+    if (!pick) return;
+    into = pick.branchName;
+  } catch (err) {
+    logger?.warn(`[review] could not list branches: ${(err as Error).message}`);
+  }
+
+  try {
+    const out = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.SourceControl, title: `dv review ${title.trim()}` },
+      () => provider.repo.createReview(title.trim(), description.trim() || undefined, into),
+    );
+    if (out) logger?.info(`[review] ${out}`);
+    const open = await vscode.window.showInformationMessage(
+      `Diversion: review request opened for ${branch}.`,
+      'Open in Diversion',
+    );
+    if (open === 'Open in Diversion') await provider.repo.openInWeb();
+  } catch (err) {
+    void vscode.window.showErrorMessage(`Diversion: create review failed: ${(err as Error).message}`);
   }
 }
 

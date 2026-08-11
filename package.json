@@ -293,6 +293,12 @@
         "icon": "$(tag)"
       },
       {
+        "command": "diversion.createReview",
+        "title": "Open Review Request...",
+        "category": "Diversion",
+        "icon": "$(git-pull-request-create)"
+      },
+      {
         "command": "diversion.showClashes",
         "title": "Who Else Is Editing...",
         "category": "Diversion",
@@ -548,9 +554,14 @@
           "group": "2_branch@5"
         },
         {
-          "command": "diversion.manageTags",
+          "command": "diversion.createReview",
           "when": "scmProvider == diversion",
           "group": "2_branch@6"
+        },
+        {
+          "command": "diversion.manageTags",
+          "when": "scmProvider == diversion",
+          "group": "2_branch@7"
         },
         {
           "command": "diversion.updateWorkspace",

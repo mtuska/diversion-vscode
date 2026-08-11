@@ -393,6 +393,30 @@ export class Repo {
   }
 
   /**
+   * Show what merging `ref` would do, **in the browser** — that's all dv
+   * offers here. `dv merge-preview` prints nothing but "The preview was
+   * opened in your browser", so there is no diff for us to render in-editor.
+   * Spawn-and-forget, like `dv view`.
+   */
+  async mergePreview(ref: string, into?: string): Promise<void> {
+    const args = ['merge-preview', safeRef(ref)];
+    if (into) args.push('--target', safeRef(into, 'branch'));
+    await runDv(args, { cwd: this.root, dvPath: this.dvPath, timeoutMs: 15_000 });
+  }
+
+  /**
+   * Open a review request for the current branch. `into` defaults to the
+   * repository's default branch on dv's side.
+   */
+  async createReview(title: string, description?: string, into?: string): Promise<string> {
+    const args = ['review', safeRef(title, 'title')];
+    if (into) args.push('--into', safeRef(into, 'branch'));
+    if (description) args.push('-d', description);
+    const r = await runDvOrThrow(args, { cwd: this.root, dvPath: this.dvPath, timeoutMs: 60_000 });
+    return r.stdout.trim();
+  }
+
+  /**
    * Merges parked on unresolved conflicts. Sourced from the CoreAPI rather
    * than `dv merge -l` because the CLI's listing is unstructured text.
    */
