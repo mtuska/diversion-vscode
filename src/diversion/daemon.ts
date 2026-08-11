@@ -57,6 +57,13 @@ export class DaemonClient {
     this.timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
 
+  /**
+   * The `.diversion` directory this client is rooted at. Exposed so other
+   * components (the credentials reader) resolve against the *same* home
+   * rather than re-deriving it and drifting under a custom install.
+   */
+  get diversionHome(): string { return this.home; }
+
   async health(): Promise<DaemonHealth> {
     return this.getJson<DaemonHealth>('/health');
   }

@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { CoreApiClient, CoreApiError, sanitizeBaseUrl } from '../../src/diversion/coreApi.js';
 
 const REPO = 'dv.repo.abc';
@@ -6,11 +9,17 @@ const WS = 'dv.ws.xyz';
 
 const logger = { error() {}, warn() {}, info() {}, debug() {} };
 
+/** A guaranteed-empty Diversion home, so the credentials fallback finds nothing. */
+const NO_CREDENTIALS_HOME = path.join(os.tmpdir(), 'dv-no-credentials-fixture');
+
 /** Minimal daemon stub: hands out a far-future token and one local clone. */
-function fakeDaemon(overrides: Partial<{ tokenCalls: { n: number } }> = {}) {
+function fakeDaemon(overrides: Partial<{ tokenCalls: { n: number }; diversionHome: string }> = {}) {
   const tokenCalls = overrides.tokenCalls ?? { n: 0 };
   return {
     tokenCalls,
+    // Never the real ~/.diversion: the credentials fallback resolves against
+    // this, and a test must not be able to read the developer's own tokens.
+    diversionHome: overrides.diversionHome ?? NO_CREDENTIALS_HOME,
     async coreToken() {
       tokenCalls.n++;
       return { AccessToken: 'tok', ExpiresAt: Math.floor(Date.now() / 1000) + 3600 };
@@ -199,14 +208,41 @@ describe('CoreApiClient operator-supplied token', () => {
 
   // "CoreAPI request failed" when the *agent* is down sends people looking in
   // entirely the wrong place.
-  it('names the agent, not the CoreAPI, when token minting fails', async () => {
+  it('names the agent and every remedy when no token can be obtained', async () => {
     stubFetch([['/branches', { items: [] }]]);
     const daemon = {
+      diversionHome: NO_CREDENTIALS_HOME,
       async coreToken() { throw new Error('connect ECONNREFUSED 127.0.0.1:8797'); },
       async workspaces() { return {}; },
     } as never;
     await expect(new CoreApiClient(daemon, logger).listBranches(REPO))
-      .rejects.toThrow(/local Diversion agent.*DIVERSION_CORE_TOKEN/s);
+      .rejects.toThrow(/local Diversion agent.*dv login.*DIVERSION_CORE_TOKEN/s);
+  });
+
+  // The agent mints a fresh token, so it stays first; the on-disk credentials
+  // are the safety net for when it isn't running at all.
+  it('falls back to the stored credentials only after the agent fails', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dv-creds-api-'));
+    try {
+      fs.mkdirSync(path.join(home, 'credentials'));
+      fs.writeFileSync(path.join(home, 'credentials', 'dv.u.a'), JSON.stringify({
+        token: {
+          access_token: 'stored.jwt.token',
+          expiry: new Date(Date.now() + 3600_000).toISOString(),
+        },
+      }));
+      const fn = stubFetch([['/branches', { items: [] }]]);
+      const daemon = {
+        diversionHome: home,
+        async coreToken() { throw new Error('ECONNREFUSED'); },
+        async workspaces() { return {}; },
+      } as never;
+      await new CoreApiClient(daemon, logger).listBranches(REPO);
+      const [, init] = fn.mock.calls[0]! as unknown as [string, { headers: Record<string, string> }];
+      expect(init.headers.Authorization).toBe('Bearer stored.jwt.token');
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 });
 

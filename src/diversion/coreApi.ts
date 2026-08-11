@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Semaphore } from '../util/semaphore.js';
 import { BoundedCache } from '../util/boundedCache.js';
 import { formatDay } from '../util/dates.js';
+import { readStoredToken } from './credentialsFile.js';
 import type { DaemonClient } from './daemon.js';
 import type { LoggerLike } from '../util/logCore.js';
 
@@ -526,12 +527,28 @@ export class CoreApiClient {
     try {
       this.token = await this.tokenInFlight;
     } catch (err) {
+      // Agent unavailable. Fall back to the token `dv login` / `dv authenticate`
+      // already stored on disk — same kind of bearer, no agent required. This
+      // is tried *after* the agent because the agent mints a fresh one.
+      const stored = await readStoredToken({ diversionHome: this.daemon.diversionHome })
+        .catch(() => undefined);
+      if (stored) {
+        this.logger.info('CoreAPI: agent unavailable; using the token from the dv credentials store.');
+        this.token = {
+          AccessToken: stored.accessToken,
+          // Re-check on the same cadence as a minted token when we know the
+          // expiry; otherwise re-read shortly so a `dv login` is picked up.
+          ExpiresAt: Math.floor((stored.expiresAt ?? Date.now() + 5 * 60_000) / 1000),
+        };
+        return this.token.AccessToken;
+      }
       // The generic connection error here is genuinely baffling — it looks
       // like the *CoreAPI* is unreachable when in fact the local agent is.
       throw new CoreApiError(
-        `Could not obtain a CoreAPI token from the local Diversion agent ` +
-        `(${(err as Error).message}). Start the agent, or supply a token ` +
-        `directly via the DIVERSION_CORE_TOKEN environment variable.`,
+        `Could not obtain a CoreAPI token: the local Diversion agent is ` +
+        `unreachable (${(err as Error).message}) and no valid token is stored ` +
+        `on disk. Start the agent, run \`dv login\` (or ` +
+        `\`dv authenticate <dvk_…>\`), or set DIVERSION_CORE_TOKEN.`,
       );
     }
     return this.token.AccessToken;
