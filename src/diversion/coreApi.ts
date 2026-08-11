@@ -54,6 +54,19 @@ export interface CoreApiClientOptions {
   /** Override the CoreAPI base URL (defaults to the production endpoint). */
   baseUrl?: string;
   timeoutMs?: number;
+  /**
+   * A CoreAPI access token supplied by the operator, used verbatim instead of
+   * asking the local agent to mint one.
+   *
+   * This exists because `/token/core` is undocumented — it ships and works,
+   * but Diversion could gate or remove it, and the agent has to be running at
+   * all. With this set, the CoreAPI reads keep working in environments where
+   * neither holds.
+   *
+   * We never refresh it: its lifetime is the operator's problem, and guessing
+   * at a refresh flow we haven't verified would be worse than a clean 401.
+   */
+  accessToken?: string;
 }
 
 export class CoreApiError extends Error {
@@ -113,6 +126,8 @@ export class CoreApiClient {
   private readonly timeoutMs: number;
   private token: CoreToken | undefined;
   private tokenInFlight: Promise<CoreToken> | undefined;
+  /** Operator-supplied bearer; bypasses the agent entirely when set. */
+  private readonly staticToken: string | undefined;
   private readonly limiter = new Semaphore(CORE_CONCURRENCY);
   private readonly commitCache = new BoundedCache<Promise<CoreCommit | undefined>>(COMMIT_CACHE_CAP);
   private readonly compareCache = new BoundedCache<Promise<FileChange[]>>(COMPARE_CACHE_CAP);
@@ -124,6 +139,8 @@ export class CoreApiClient {
   ) {
     this.baseUrl = sanitizeBaseUrl(opts.baseUrl, logger);
     this.timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.staticToken = opts.accessToken?.trim() || undefined;
+    if (this.staticToken) logger.info('CoreAPI: using an operator-supplied access token.');
   }
 
   // ───── compare ─────
@@ -493,6 +510,10 @@ export class CoreApiClient {
   }
 
   private async bearer(): Promise<string> {
+    // An operator-supplied token short-circuits everything: no agent needed,
+    // and no refresh (see CoreApiClientOptions.accessToken).
+    if (this.staticToken) return this.staticToken;
+
     const now = Date.now();
     if (this.token && this.token.ExpiresAt * 1000 - TOKEN_SKEW_MS > now) {
       return this.token.AccessToken;
@@ -502,7 +523,17 @@ export class CoreApiClient {
     if (!this.tokenInFlight) {
       this.tokenInFlight = this.daemon.coreToken().finally(() => { this.tokenInFlight = undefined; });
     }
-    this.token = await this.tokenInFlight;
+    try {
+      this.token = await this.tokenInFlight;
+    } catch (err) {
+      // The generic connection error here is genuinely baffling — it looks
+      // like the *CoreAPI* is unreachable when in fact the local agent is.
+      throw new CoreApiError(
+        `Could not obtain a CoreAPI token from the local Diversion agent ` +
+        `(${(err as Error).message}). Start the agent, or supply a token ` +
+        `directly via the DIVERSION_CORE_TOKEN environment variable.`,
+      );
+    }
     return this.token.AccessToken;
   }
 

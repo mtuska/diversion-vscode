@@ -186,6 +186,30 @@ describe('CoreApiClient immutable-read caching', () => {
   });
 });
 
+describe('CoreApiClient operator-supplied token', () => {
+  it('uses the given token verbatim and never asks the agent', async () => {
+    const fn = stubFetch([['/branches', { items: [] }]]);
+    const daemon = fakeDaemon();
+    const client = new CoreApiClient(daemon, logger, { accessToken: 'dv-static-token' });
+    await client.listBranches(REPO);
+    const [, init] = fn.mock.calls[0]! as unknown as [string, { headers: Record<string, string> }];
+    expect(init.headers.Authorization).toBe('Bearer dv-static-token');
+    expect((daemon as unknown as { tokenCalls: { n: number } }).tokenCalls.n).toBe(0);
+  });
+
+  // "CoreAPI request failed" when the *agent* is down sends people looking in
+  // entirely the wrong place.
+  it('names the agent, not the CoreAPI, when token minting fails', async () => {
+    stubFetch([['/branches', { items: [] }]]);
+    const daemon = {
+      async coreToken() { throw new Error('connect ECONNREFUSED 127.0.0.1:8797'); },
+      async workspaces() { return {}; },
+    } as never;
+    await expect(new CoreApiClient(daemon, logger).listBranches(REPO))
+      .rejects.toThrow(/local Diversion agent.*DIVERSION_CORE_TOKEN/s);
+  });
+});
+
 describe('CoreApiClient token single-flight', () => {
   it('mints one token for concurrent cold-start requests', async () => {
     stubFetch([['/branches', { object: 'Branch', items: [] }]]);

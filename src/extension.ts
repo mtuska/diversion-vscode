@@ -552,7 +552,9 @@ async function scanWorkspaceFolders(): Promise<void> {
   for (const [root, { id, folders: openFolders }] of foldersByRoot) {
     let provider = providers.get(root);
     if (!provider) {
-      const repo = new Repo(daemon, id, settings.dvPath, log, settings.coreApiUrl);
+      const repo = new Repo(daemon, id, settings.dvPath, log, {
+        ...(settings.coreApiUrl ? { baseUrl: settings.coreApiUrl } : {}),
+      });
       provider = new DiversionScmProvider(
         repo, log, activationContext!.workspaceState, quickDiff, changeDecorations,
       );

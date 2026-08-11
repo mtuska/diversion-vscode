@@ -124,6 +124,20 @@ args = ["-y", "@mtuska/diversion-mcp"]
 }
 ```
 
+### MCP server environment variables
+
+| Variable | Effect |
+| --- | --- |
+| `DIVERSION_DV_PATH` | Path to the `dv` binary (default: PATH lookup). |
+| `DIVERSION_DAEMON_URL` | Local agent base URL (default: auto-discovered). |
+| `DIVERSION_CORE_API_URL` | CoreAPI base URL (default `https://api.diversion.dev/v0`). |
+| `DIVERSION_CORE_TOKEN` | CoreAPI access token, used instead of asking the local agent to mint one. Useful where the agent isn't running. Not refreshed — supply a live token. |
+| `DIVERSION_MAX_PARALLEL` | Cap on concurrent `dv` processes (default 4). |
+| `DIVERSION_MCP_READONLY` | `1`/`true`/`yes` registers only read tools. |
+| `DIVERSION_LOG_LEVEL` | `off` \| `error` \| `warn` \| `info` \| `debug`. |
+
+Normally none of these are needed: the server discovers repos through the local agent and gets its CoreAPI token from it.
+
 The `-y` flag silently accepts npx's "install on first run" prompt — without it some MCP clients hang waiting on a TTY they never provide.
 
 ### Alternatives without npm

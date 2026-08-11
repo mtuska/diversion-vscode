@@ -12,6 +12,8 @@ export interface RepoRegistryOptions {
   daemonUrl?: string;
   /** Override the CoreAPI base URL. Empty / undefined uses the production endpoint. */
   coreApiUrl?: string;
+  /** CoreAPI access token supplied by the operator (DIVERSION_CORE_TOKEN). */
+  coreAccessToken?: string;
 }
 
 /**
@@ -32,6 +34,7 @@ export class RepoRegistry {
   private readonly daemon: DaemonClient;
   private readonly dvPath: string | undefined;
   private readonly coreApiUrl: string | undefined;
+  private readonly coreAccessToken: string | undefined;
   private readonly repos = new Map<string, Repo>();
 
   constructor(
@@ -40,6 +43,7 @@ export class RepoRegistry {
   ) {
     this.dvPath = opts.dvPath?.trim() || undefined;
     this.coreApiUrl = opts.coreApiUrl?.trim() || undefined;
+    this.coreAccessToken = opts.coreAccessToken?.trim() || undefined;
     this.daemon = new DaemonClient(opts.daemonUrl?.trim() ? { baseUrl: opts.daemonUrl.trim() } : {});
   }
 
@@ -92,7 +96,10 @@ export class RepoRegistry {
 
     const identity = await detectRepo(this.daemon, repoRoot);
     if (!identity) return undefined;
-    const repo = new Repo(this.daemon, identity, this.dvPath, this.logger, this.coreApiUrl);
+    const repo = new Repo(this.daemon, identity, this.dvPath, this.logger, {
+      ...(this.coreApiUrl ? { baseUrl: this.coreApiUrl } : {}),
+      ...(this.coreAccessToken ? { accessToken: this.coreAccessToken } : {}),
+    });
     this.repos.set(repoRoot, repo);
     return repo;
   }

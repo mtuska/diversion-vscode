@@ -16,6 +16,10 @@ const PKG_VERSION = '0.7.0';
  *   DIVERSION_DV_PATH       Override the `dv` binary location.
  *   DIVERSION_DAEMON_URL    Override the agent base URL (e.g. http://127.0.0.1:38825).
  *   DIVERSION_CORE_API_URL  Override the CoreAPI base URL (default https://api.diversion.dev/v0).
+ *   DIVERSION_CORE_TOKEN    CoreAPI access token, used instead of asking the local
+ *                           agent to mint one. For environments where the agent
+ *                           isn't running, or if `/token/core` is ever gated. Not
+ *                           refreshed — supply a live token.
  *   DIVERSION_MAX_PARALLEL  Cap on concurrent dv processes (default 4).
  *   DIVERSION_MCP_READONLY  If set (1/true/yes), register only read tools.
  *   DIVERSION_LOG_LEVEL     off|error|warn|info|debug
@@ -37,6 +41,7 @@ export async function runMcpServer(): Promise<void> {
     dvPath: process.env.DIVERSION_DV_PATH,
     daemonUrl: process.env.DIVERSION_DAEMON_URL,
     coreApiUrl: process.env.DIVERSION_CORE_API_URL,
+    coreAccessToken: process.env.DIVERSION_CORE_TOKEN,
   });
   await registry.discover();
 

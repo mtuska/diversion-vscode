@@ -71,14 +71,19 @@ export class Repo {
     private readonly identity: RepoIdentity,
     private dvPath: string | undefined,
     private readonly logger: LoggerLike,
-    private readonly coreApiUrl?: string,
+    /**
+     * CoreAPI connection overrides. `accessToken` lets an operator bypass the
+     * local agent's token minting entirely — see CoreApiClientOptions.
+     */
+    private readonly coreOptions: { baseUrl?: string; accessToken?: string } = {},
   ) {}
 
   /** Lazily-constructed CoreAPI client (auth via the local agent token). */
   private get core(): CoreApiClient {
     if (!this.coreClient) {
       this.coreClient = new CoreApiClient(this.daemon, this.logger, {
-        ...(this.coreApiUrl ? { baseUrl: this.coreApiUrl } : {}),
+        ...(this.coreOptions.baseUrl ? { baseUrl: this.coreOptions.baseUrl } : {}),
+        ...(this.coreOptions.accessToken ? { accessToken: this.coreOptions.accessToken } : {}),
       });
     }
     return this.coreClient;
