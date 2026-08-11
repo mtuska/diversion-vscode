@@ -347,10 +347,13 @@ async function checkoutBody(repo: Repo, args: CheckoutArg): Promise<string> {
 
 async function mergeBody(repo: Repo, args: MergeArg): Promise<string> {
   const ref = nonEmpty('ref', args.ref);
+  // Snapshot first: an unrelated merge parked earlier must not be reported as
+  // this one having stopped on conflicts.
+  const before = new Set((await repo.listOpenMerges().catch(() => [])).map((m) => m.id));
   await repo.merge(ref, args.conflictResolution);
   // dv exits 0 whether the merge landed or was parked on conflicts, so the
   // only honest way to report the outcome is to ask which happened.
-  const parked = await repo.listOpenMerges().catch(() => []);
+  const parked = (await repo.listOpenMerges().catch(() => [])).filter((m) => !before.has(m.id));
   if (parked.length > 0) {
     return `Merge of "${ref}" stopped on conflicts; ${parked.length} unresolved merge(s). ` +
       `Conflicting blocks are resolved in the Diversion app, not on disk.`;

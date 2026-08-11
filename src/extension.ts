@@ -2403,6 +2403,13 @@ async function mergeCommand(): Promise<void> {
     return;
   }
 
+  // Snapshot the merges already parked — someone else's unresolved merge from
+  // last week must not be reported as "your merge stopped on conflicts", which
+  // would turn a clean merge into a false alarm.
+  const preExisting = new Set((await openMergesFor(provider)).map((m) => m.id));
+  const newlyParked = async (): Promise<OpenMerge[]> =>
+    (await openMergesFor(provider)).filter((m) => !preExisting.has(m.id));
+
   try {
     await vscode.window.withProgress(
       { location: vscode.ProgressLocation.SourceControl, title: `dv merge ${pick.branchName}` },
@@ -2412,14 +2419,14 @@ async function mergeCommand(): Promise<void> {
     updateStatusBar();
     // `dv merge` exits 0 whether it merged cleanly or parked the merge on
     // conflicts, so "success" alone doesn't mean the branch actually moved.
-    const parked = await openMergesFor(provider);
+    const parked = await newlyParked();
     if (parked.length > 0) {
       await promptToResolveMerges(provider, parked, `Merge of ${pick.branchName} stopped on conflicts.`);
     } else {
       void vscode.window.showInformationMessage(`Merged ${pick.branchName} into ${current}.`);
     }
   } catch (err) {
-    const parked = await openMergesFor(provider);
+    const parked = await newlyParked();
     if (parked.length > 0) {
       await promptToResolveMerges(provider, parked, `Merge of ${pick.branchName} stopped on conflicts.`);
       return;
