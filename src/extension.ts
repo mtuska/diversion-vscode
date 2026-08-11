@@ -17,6 +17,7 @@ import { IgnoreManager } from './util/ignore.js';
 import { Blame } from './scm/blame.js';
 import { ShelvesTreeProvider, type ShelfNode } from './scm/shelvesView.js';
 import { MergeConflictResolver } from './scm/mergeConflicts.js';
+import { ClashDecorationProvider } from './scm/clashDecorations.js';
 import { watchWorkspace } from './util/fsWatch.js';
 import { StatusBar } from './ui/statusBar.js';
 import { showLogWebview } from './ui/webviews/log.js';
@@ -36,6 +37,7 @@ let blame: Blame | undefined;
 let shelvesProvider: ShelvesTreeProvider | undefined;
 let commitContent: CommitContentProvider | undefined;
 let mergeConflicts: MergeConflictResolver | undefined;
+let clashDecorations: ClashDecorationProvider | undefined;
 const providers = new Map<string, DiversionScmProvider>();
 const ignoreManagers = new Map<string, IgnoreManager>();
 /**
@@ -189,6 +191,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     log,
   );
   mergeConflicts = new MergeConflictResolver(context.globalStorageUri, log);
+  clashDecorations = new ClashDecorationProvider(
+    () => [...providers.values()].map((p) => p.repo),
+    log,
+    () => readSettings().clashDetection,
+  );
 
   context.subscriptions.push(
     statusBar,
@@ -200,7 +207,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     blame,
     vscode.workspace.registerTextDocumentContentProvider(DV_SCHEME, quickDiff),
     vscode.workspace.registerTextDocumentContentProvider(DV_COMMIT_SCHEME, commitContent),
+    clashDecorations,
     vscode.window.registerFileDecorationProvider(lockDecorations),
+    vscode.window.registerFileDecorationProvider(clashDecorations),
     vscode.window.registerFileDecorationProvider(changeDecorations),
     vscode.window.registerTreeDataProvider('diversion.shelves', shelvesProvider),
     { dispose: () => log.dispose() },
@@ -235,6 +244,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('diversion.showOpenMerges', showOpenMergesCommand),
     vscode.commands.registerCommand('diversion.resolveMergeConflicts', resolveMergeConflictsCommand),
     vscode.commands.registerCommand('diversion.revisionLimits', revisionLimitsCommand),
+    vscode.commands.registerCommand('diversion.showClashes', showClashesCommand),
     vscode.commands.registerCommand('diversion.submitMergeResolution', submitMergeResolutionCommand),
     vscode.commands.registerCommand('diversion.lockFile', lockFileCommand),
     vscode.commands.registerCommand('diversion.unlockFile', unlockFileCommand),
@@ -331,6 +341,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         onDocumentMutated(f.oldUri);
         onDocumentMutated(f.newUri);
       }
+    }),
+    // The moment worth interrupting for: the user has started diverging from
+    // someone else's in-flight work. Fires on the first keystroke rather than
+    // on save, because by save time the work is already done.
+    vscode.workspace.onDidChangeTextDocument((e) => {
+      if (e.contentChanges.length > 0) clashDecorations?.notifyEditing(e.document.uri);
     }),
   );
 
@@ -662,6 +678,7 @@ async function moreActionsCommand(): Promise<void> {
     { label: '$(lock) Lock File', command: 'diversion.lockFile' },
     { label: '$(unlock) Unlock File', command: 'diversion.unlockFile' },
     { label: '$(list-tree) List Locks…', command: 'diversion.listLocks' },
+    { label: '$(person) Who Else Is Editing…', command: 'diversion.showClashes' },
     sep('Tags'),
     { label: '$(tag) Manage Tags…', command: 'diversion.manageTags' },
     sep('View'),
@@ -2554,6 +2571,69 @@ function promptRuleId(title: string): Thenable<string | undefined> {
     prompt: 'Rule ID, as shown in the list above',
     validateInput: (s) => s.trim() ? undefined : 'Rule ID required',
   }).then((s) => s?.trim() || undefined);
+}
+
+/**
+ * "Who else is working on what" — every file a teammate currently has in
+ * flight, so you can see the collision surface before you pick your next task
+ * rather than after.
+ */
+async function showClashesCommand(): Promise<void> {
+  const provider = activeProvider();
+  if (!provider) return;
+  if (!readSettings().clashDetection) {
+    const enable = await vscode.window.showInformationMessage(
+      'Diversion: clash detection is disabled.',
+      'Enable It',
+    );
+    if (enable !== 'Enable It') return;
+    await vscode.workspace.getConfiguration('diversion').update(
+      'clashDetection', true, vscode.ConfigurationTarget.Global,
+    );
+  }
+
+  let clashes: Awaited<ReturnType<typeof provider.repo.clashingEdits>>;
+  try {
+    clashes = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Window, title: 'Diversion: checking for clashing edits' },
+      async () => {
+        provider.repo.invalidateClashCache();
+        return provider.repo.clashingEdits();
+      },
+    );
+  } catch (err) {
+    void vscode.window.showErrorMessage(`Diversion: could not check for clashes: ${(err as Error).message}`);
+    return;
+  }
+  await clashDecorations?.refresh();
+
+  if (clashes.length === 0) {
+    void vscode.window.showInformationMessage('Diversion: nobody else is editing files in this repo.');
+    return;
+  }
+
+  const pick = await vscode.window.showQuickPick(
+    clashes.map((c) => ({
+      label: `$(person) ${c.path}`,
+      description: c.author + (c.branchName ? ` · ${c.branchName}` : ''),
+      detail: c.workspaceId ? 'uncommitted in their workspace' : c.kind,
+      clash: c,
+    })),
+    {
+      placeHolder: `${clashes.length} file(s) in flight elsewhere — pick one to open`,
+      matchOnDescription: true,
+    },
+  );
+  if (!pick) return;
+  const abs = path.join(provider.repo.root, pick.clash.path);
+  try {
+    await vscode.window.showTextDocument(vscode.Uri.file(abs));
+  } catch {
+    // Their file may not exist locally yet (they added it, we haven't synced).
+    void vscode.window.showInformationMessage(
+      `Diversion: ${pick.clash.path} isn't in your workspace yet — ${pick.clash.author} has it in flight.`,
+    );
+  }
 }
 
 async function resolveMergeConflictsCommand(): Promise<void> {

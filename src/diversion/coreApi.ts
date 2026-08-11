@@ -10,6 +10,8 @@ const APP_NAME = '@mtuska/vscode-diversion';
 const APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0-dev';
 import type {
   BranchInfo,
+  ChangeKind,
+  ClashingEdit,
   CommitDetails,
   CommitSummary,
   CoreBranch,
@@ -19,6 +21,7 @@ import type {
   CoreDetailedMerge,
   CoreListEnvelope,
   CoreMerge,
+  CoreOtherStatusEntry,
   CoreOtherStatusesResponse,
   CoreRepo,
   CoreShelf,
@@ -426,11 +429,54 @@ export class CoreApiClient {
 
   // ───── awareness ─────
 
-  /** Files being touched in other users' workspaces/branches (clash signal). */
-  async otherStatuses(repoId: string, workspaceId: string): Promise<CoreOtherStatusesResponse> {
-    return this.get<CoreOtherStatusesResponse>(
-      `/repos/${enc(repoId)}/workspaces/${enc(workspaceId)}/other_statuses`,
-    );
+  /**
+   * Files other people are touching — the advisory "potential clash" signal.
+   *
+   * Nothing here is a lock; it tells you a merge is coming so you can talk to
+   * someone before both sides diverge. Entries naming our own workspace are
+   * dropped: the endpoint is meant to exclude us, but a self-clash badge on
+   * every file you edit would be worse than no feature at all.
+   *
+   * Paged like the other list readers, with a hard cap — a repo where
+   * thousands of paths are in flight elsewhere has nothing useful to show a
+   * single developer anyway.
+   */
+  async clashingEdits(repoId: string, workspaceId: string): Promise<ClashingEdit[]> {
+    const PAGE = 500;
+    const HARD_CAP = 5_000;
+    const base = `/repos/${enc(repoId)}/workspaces/${enc(workspaceId)}/other_statuses`;
+    const entries: CoreOtherStatusEntry[] = [];
+    let skip = 0;
+    for (;;) {
+      const res = await this.get<CoreOtherStatusesResponse>(
+        `${base}?${new URLSearchParams({ limit: String(PAGE), skip: String(skip) }).toString()}`,
+      );
+      const page = res.statuses ?? [];
+      entries.push(...page);
+      if (page.length < PAGE || entries.length >= HARD_CAP) break;
+      skip += page.length;
+    }
+
+    const out: ClashingEdit[] = [];
+    for (const entry of entries) {
+      if (!entry.path) continue;
+      for (const status of entry.file_statuses ?? []) {
+        if (status.workspace_id && status.workspace_id === workspaceId) continue;
+        const kind = OBJECT_STATUS_KIND[status.status ?? 0];
+        // status 1 is INTACT — present in the response but not a clash.
+        if (!kind) continue;
+        const clash: ClashingEdit = {
+          path: entry.path,
+          author: status.author?.full_name || status.author?.name || 'someone',
+          kind,
+        };
+        if (status.branch_name) clash.branchName = status.branch_name;
+        if (status.workspace_id) clash.workspaceId = status.workspace_id;
+        if (Number.isFinite(status.mtime)) clash.mtime = status.mtime! * 1000;
+        out.push(clash);
+      }
+    }
+    return out;
   }
 
   // ───── internals ─────
@@ -605,6 +651,16 @@ export class CoreApiClient {
 }
 
 // ───── mappers ─────
+
+/**
+ * CoreAPI `ObjectStatus` → our change kind. 1 (INTACT) maps to nothing on
+ * purpose: it means "present and unmodified", which is not a clash.
+ */
+const OBJECT_STATUS_KIND: Record<number, ChangeKind | undefined> = {
+  2: 'added',
+  3: 'modified',
+  4: 'deleted',
+};
 
 function mapComparisonItem(item: CoreComparisonItem): FileChange | undefined {
   const { base_item: base, other_item: other } = item;

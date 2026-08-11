@@ -293,6 +293,12 @@
         "icon": "$(tag)"
       },
       {
+        "command": "diversion.showClashes",
+        "title": "Who Else Is Editing...",
+        "category": "Diversion",
+        "icon": "$(person)"
+      },
+      {
         "command": "diversion.revisionLimits",
         "title": "Revision Limits...",
         "category": "Diversion",
@@ -402,6 +408,11 @@
           "minimum": 0,
           "maximum": 10,
           "description": "How many directory levels below each workspace folder to scan for nested Diversion repositories (a `.diversion` folder). 0 disables nested scanning — only repositories containing the workspace folder itself are detected. Default 1 finds repos that are direct children of the workspace folder, matching the built-in git extension's `git.repositoryScanMaxDepth`."
+        },
+        "diversion.clashDetection": {
+          "type": "boolean",
+          "default": true,
+          "description": "Flag files that teammates are already editing, with a badge in the explorer and a one-time warning when you start editing one. Advisory only — unlike `dv lock` it prevents nothing and needs no paid tier. Costs one cloud request per repo per minute, made only for repos you are actually looking at."
         },
         "diversion.log.level": {
           "type": "string",

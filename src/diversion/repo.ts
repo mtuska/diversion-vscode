@@ -15,6 +15,7 @@ import type { DaemonClient } from './daemon.js';
 import type {
   BranchInfo,
   CommitDetails,
+  ClashingEdit,
   CommitSummary,
   DetailedOpenMerge,
   FileChange,
@@ -41,6 +42,13 @@ export interface RepoState {
  * long-running commit only to see a generic dv failure.
  */
 export const MAX_COMMIT_MESSAGE_LEN = 16384;
+
+/**
+ * How long a clash snapshot stays fresh. Other people's in-flight work moves
+ * on a human timescale, and this is a cloud round-trip driven by explorer
+ * decoration requests — a short TTL would turn scrolling into a request storm.
+ */
+const CLASH_TTL_MS = 60_000;
 
 /**
  * High-level operations on a single Diversion workspace. Wraps the CLI runner
@@ -758,6 +766,27 @@ export class Repo {
     return r.stdout.trim();
   }
 
+  /**
+   * Paths other people are touching right now — advisory, not a lock.
+   *
+   * Cached for a minute: this is a cloud round-trip driven by decoration
+   * requests, and other people's work doesn't change second to second.
+   */
+  async clashingEdits(): Promise<ClashingEdit[]> {
+    if (this.clashCache && Date.now() - this.clashCacheAt < CLASH_TTL_MS) {
+      return this.clashCache;
+    }
+    const clashes = await this.core.clashingEdits(this.identity.repoId, this.identity.workspaceId);
+    this.clashCache = clashes;
+    this.clashCacheAt = Date.now();
+    return clashes;
+  }
+
+  /** Drop the clash cache so the next read re-queries. */
+  invalidateClashCache(): void {
+    this.clashCache = undefined;
+  }
+
   /** List all hard locks visible to this workspace. Cached briefly. */
   async listLocks(): Promise<LockInfo[]> {
     if (this.locksCache && Date.now() - this.locksCacheAt < 5_000) {
@@ -809,6 +838,8 @@ export class Repo {
 
   private locksCache: LockInfo[] | undefined;
   private locksCacheAt = 0;
+  private clashCache: ClashingEdit[] | undefined;
+  private clashCacheAt = 0;
   private conflictCache: SyncConflict[] | undefined;
 }
 

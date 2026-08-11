@@ -162,6 +162,29 @@ export interface OpenMerge {
   startedBy?: string;
 }
 
+/**
+ * Someone else is touching a file you can also touch — the "potential clash"
+ * signal from the CoreAPI's other_statuses endpoint.
+ *
+ * This is advisory, not a lock: nothing stops either side from editing. It's
+ * most valuable for binary assets, which no per-block merge UI can rescue
+ * once both sides have changed them.
+ */
+export interface ClashingEdit {
+  /** Repo-relative path. */
+  path: string;
+  /** Display name of whoever is touching it. */
+  author: string;
+  /** What they did to it. */
+  kind: ChangeKind;
+  /** Their branch, when the API reports one. */
+  branchName?: string;
+  /** Their workspace, when the clash is uncommitted work rather than a commit. */
+  workspaceId?: string;
+  /** Epoch milliseconds of their last touch, when known. */
+  mtime?: number;
+}
+
 /** Which version of a conflicting path won. */
 export type ConflictSide = 'RESULT' | 'BASE' | 'OTHER';
 

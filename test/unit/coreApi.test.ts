@@ -337,6 +337,71 @@ describe('CoreApiClient merge conflict resolution', () => {
   });
 });
 
+describe('CoreApiClient.clashingEdits', () => {
+  const entry = (path: string, statuses: unknown[]) => ({ path, file_statuses: statuses });
+
+  it('flattens per-path statuses into one clash each', async () => {
+    stubFetch([['/other_statuses', {
+      statuses: [
+        entry('Art/hero.uasset', [
+          { workspace_id: 'dv.ws.other', branch_name: 'art', status: 3, author: { full_name: 'Ada Lovelace' }, mtime: 1780075070 },
+        ]),
+        entry('src/a.ts', [
+          { commit_id: 'dv.commit.5', branch_name: 'feature', status: 2, author: { name: 'grace' } },
+        ]),
+      ],
+    }]]);
+    const clashes = await new CoreApiClient(fakeDaemon(), logger).clashingEdits(REPO, WS);
+    expect(clashes).toEqual([
+      {
+        path: 'Art/hero.uasset', author: 'Ada Lovelace', kind: 'modified',
+        branchName: 'art', workspaceId: 'dv.ws.other', mtime: 1780075070_000,
+      },
+      { path: 'src/a.ts', author: 'grace', kind: 'added', branchName: 'feature' },
+    ]);
+  });
+
+  // A badge on every file you yourself are editing would be worse than the
+  // feature not existing.
+  it('drops entries from our own workspace', async () => {
+    stubFetch([['/other_statuses', {
+      statuses: [entry('src/a.ts', [
+        { workspace_id: WS, status: 3, author: { name: 'me' } },
+        { workspace_id: 'dv.ws.other', status: 3, author: { name: 'them' } },
+      ])],
+    }]]);
+    const clashes = await new CoreApiClient(fakeDaemon(), logger).clashingEdits(REPO, WS);
+    expect(clashes).toHaveLength(1);
+    expect(clashes[0]!.author).toBe('them');
+  });
+
+  // ObjectStatus 1 is INTACT — present in the response, not a clash.
+  it('ignores INTACT and unknown statuses', async () => {
+    stubFetch([['/other_statuses', {
+      statuses: [entry('src/a.ts', [
+        { workspace_id: 'w1', status: 1, author: { name: 'x' } },
+        { workspace_id: 'w2', status: 99, author: { name: 'y' } },
+        { workspace_id: 'w3', status: 4, author: { name: 'z' } },
+      ])],
+    }]]);
+    const clashes = await new CoreApiClient(fakeDaemon(), logger).clashingEdits(REPO, WS);
+    expect(clashes).toEqual([{ path: 'src/a.ts', author: 'z', kind: 'deleted', workspaceId: 'w3' }]);
+  });
+
+  it('falls back to a placeholder when the author is unnamed', async () => {
+    stubFetch([['/other_statuses', {
+      statuses: [entry('a.txt', [{ workspace_id: 'w1', status: 3, author: { id: 'dv.u.1' } }])],
+    }]]);
+    const [clash] = await new CoreApiClient(fakeDaemon(), logger).clashingEdits(REPO, WS);
+    expect(clash!.author).toBe('someone');
+  });
+
+  it('handles an empty response', async () => {
+    stubFetch([['/other_statuses', {}]]);
+    expect(await new CoreApiClient(fakeDaemon(), logger).clashingEdits(REPO, WS)).toEqual([]);
+  });
+});
+
 describe('CoreApiClient.listRepos', () => {
   it('marks repos cloned locally using the agent registry', async () => {
     stubFetch([['/repos', {

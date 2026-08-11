@@ -8,6 +8,8 @@ export interface DvSettings {
   scmShowAllRepoChanges: boolean;
   maxParallelProcesses: number;
   repositoryScanMaxDepth: number;
+  /** Show advisory badges for files other people are editing. */
+  clashDetection: boolean;
 }
 
 export function readSettings(): DvSettings {
@@ -23,5 +25,6 @@ export function readSettings(): DvSettings {
     scmShowAllRepoChanges: cfg.get<boolean>('scm.showAllRepoChanges', false),
     maxParallelProcesses: Math.max(1, Math.min(32, cfg.get<number>('maxParallelProcesses', 4))),
     repositoryScanMaxDepth: Math.max(0, Math.min(10, cfg.get<number>('repositoryScanMaxDepth', 1))),
+    clashDetection: cfg.get<boolean>('clashDetection', true),
   };
 }
