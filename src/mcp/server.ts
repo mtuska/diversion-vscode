@@ -6,7 +6,13 @@ import { RepoRegistry } from './repoRegistry.js';
 import { registerAllTools } from './tools.js';
 
 const PKG_NAME = 'diversion-mcp';
-const PKG_VERSION = '0.7.0';
+/**
+ * Build-time stamped by esbuild from package.json (see esbuild.config.mjs);
+ * falls back under tsc/vitest. Previously hardcoded, which meant every release
+ * silently depended on someone remembering to hand-edit it.
+ */
+declare const __APP_VERSION__: string;
+const PKG_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0-dev';
 
 /**
  * Start the MCP server on stdio. Honors a small set of environment

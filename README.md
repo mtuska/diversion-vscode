@@ -8,13 +8,22 @@
 
 Source-control integration for [Diversion](https://www.diversion.dev) — registers Diversion as a first-class SCM provider in VS Code, and ships a standalone stdio MCP server (`diversion-mcp`) so any MCP-aware AI client can drive your Diversion workspaces.
 
-> **Status: v0.6.x.** Available on the [VS Marketplace](https://marketplace.visualstudio.com/items?itemName=mtuska.diversion-vscode). Tested against `dv v1.0.x` on VS Code 1.95+ and on Linux / macOS / Windows. Coexists peacefully with the built-in Git provider; activates whenever the open folder lives inside (or is) a Diversion-managed workspace.
+> **Status: v0.8.x.** Available on the [VS Marketplace](https://marketplace.visualstudio.com/items?itemName=mtuska.diversion-vscode). Tested against `dv v1.0.1047` on VS Code 1.95+ and on Linux / macOS / Windows. Coexists peacefully with the built-in Git provider; activates whenever the open folder lives inside (or is) a Diversion-managed workspace.
 
-This v0.6 release **cuts read operations over to the Diversion CoreAPI**. Status, changed files, branches, log/history, per-commit diffs, shelves, and the repo list are now sourced from structured cloud endpoints (`https://api.diversion.dev/v0`) instead of text-parsing the `dv` CLI — authenticated by a short-lived token minted by the local sync agent, so there's no extra OAuth to configure. Only the operations with no API equivalent (**file locks** and **line-level blame**) still parse CLI output, and write operations (commit, checkout, merge, …) still go through `dv`. The extension and the **MCP server** share this CoreAPI client and the same dv-CLI runner.
+This v0.8 release **catches up with Diversion's mid-2026 feature drop, and gets ahead of it**:
+
+- **Conflicts, resolved block by block.** Both kinds. Sync conflicts (`.dv-conflict` sidecars) and merge conflicts (parked server-side) are diffed into standard conflict markers, so VS Code's built-in *Accept Current / Accept Incoming / Accept Both* actions drive the decisions. Merge resolutions are submitted back and finalized without leaving the editor.
+- **Clash awareness.** A badge — and a one-time warning the moment you start typing — when a teammate already has a file in flight. Advisory, free on every tier, and the only thing on this list that prevents a conflict rather than resolving one. Turn it off with `diversion.clashDetection`.
+- **Tags**, fully: create, rename, re-describe, delete, copy ID, and rendered on the Source Control Graph.
+- **Revision limits** (`dv prune`) — list, add, edit, and remove retention rules, each behind a confirmation that says plainly what gets deleted.
+- **File history across merges**, via `dv log --show-squashed`.
+- **Localized dates**, a `dv` binary that gets found even when your PATH is minimal (Homebrew casks, app bundles), and `merge-preview` / `review` surfaced from the CLI.
+
+Read operations are sourced from the Diversion CoreAPI (`https://api.diversion.dev/v0`), authenticated by a short-lived token minted by the local sync agent — no extra OAuth to configure. Locks and line-level blame still parse CLI output, and writes go through `dv` so the local agent stays authoritative on sync state; per-conflict merge resolution is the one exception, because `dv` exposes no command for it. The extension and the **MCP server** share this CoreAPI client and the same dv-CLI runner.
 
 ## What you get
 
-- **VS Code SCM provider** — branches, commits, diffs, shelves, locks, blame, the Source Control Graph. Plus all the read & write operations exposed to **GitHub Copilot Chat** (or any client of the VS Code Language Model API) as referenceable tools — `#dvStatus`, `#dvDiff`, `#dvCommit`, `#dvOverlap`, etc.
+- **VS Code SCM provider** — branches, commits, diffs, shelves, locks, blame, tags, conflict resolution, clash awareness, the Source Control Graph. Plus all the read & write operations exposed to **GitHub Copilot Chat** (or any client of the VS Code Language Model API) as referenceable tools — `#dvStatus`, `#dvDiff`, `#dvCommit`, `#dvOverlap`, etc.
 - **`diversion-mcp` standalone stdio server**, published to npm as [`@mtuska/diversion-mcp`](https://www.npmjs.com/package/@mtuska/diversion-mcp), exposing the same operations over the Model Context Protocol plus a couple of MCP-only helpers (`dv_list_repos`, `dv_open_in_web`). One-liner setup with `npx -y @mtuska/diversion-mcp` from **Claude Code**, **Codex**, **Claude Desktop**, **Cursor**, **Windsurf**, or anything that speaks MCP.
 
 See the [Language Model Tools](#language-model-tools) section for the full tool list — every Diversion operation the extension performs internally is also a tool both the in-VS-Code and out-of-VS-Code AI clients can call.

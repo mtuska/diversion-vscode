@@ -27,6 +27,8 @@ export class ClashDecorationProvider implements vscode.FileDecorationProvider, v
   private inFlight = new Map<string, Promise<void>>();
   /** Files we've already warned about, so a session nags at most once each. */
   private readonly warned = new Set<string>();
+  /** Total clashing paths across all repos — the fast bail for notifyEditing. */
+  private totalClashes = 0;
 
   constructor(
     private readonly repos: () => Iterable<Repo>,
@@ -34,9 +36,20 @@ export class ClashDecorationProvider implements vscode.FileDecorationProvider, v
     private readonly isEnabled: () => boolean,
   ) {}
 
-  /** Re-query every repo, bypassing the TTL. */
+  /**
+   * Re-query every repo, bypassing the TTL. When the feature has just been
+   * turned off this drops the snapshot and repaints instead: returning early
+   * would leave VS Code's cached badges on screen with no event to clear them.
+   */
   async refresh(): Promise<void> {
-    if (!this.isEnabled()) return;
+    if (!this.isEnabled()) {
+      const hadAny = this.totalClashes > 0;
+      this.byRepo.clear();
+      this.warned.clear();
+      this.totalClashes = 0;
+      if (hadAny) this._onDidChange.fire(undefined);
+      return;
+    }
     await Promise.all([...this.repos()].map((repo) => {
       repo.invalidateClashCache();
       return this.doRefresh(repo);
@@ -73,6 +86,10 @@ export class ClashDecorationProvider implements vscode.FileDecorationProvider, v
    * the divergence.
    */
   notifyEditing(uri: vscode.Uri): void {
+    // Runs on every keystroke in every document, so the common case — nobody
+    // is clashing with anything — must cost close to nothing. `totalClashes`
+    // is maintained on refresh precisely so we can bail before walking repos.
+    if (this.totalClashes === 0) return;
     if (uri.scheme !== 'file' || !this.isEnabled()) return;
     if (this.warned.has(uri.fsPath)) return;
     const match = this.findRepo(uri.fsPath);
@@ -92,13 +109,6 @@ export class ClashDecorationProvider implements vscode.FileDecorationProvider, v
         void vscode.commands.executeCommand('diversion.lockFile', uri);
       }
     });
-  }
-
-  /** Every known clash, for the "who's working on what" command. */
-  clashesFor(repo: Repo): ClashingEdit[] {
-    const map = this.byRepo.get(repo.root);
-    if (!map) return [];
-    return [...map.values()].flat();
   }
 
   private findRepo(fsPath: string): { repo: Repo; root: string } | undefined {
@@ -129,6 +139,7 @@ export class ClashDecorationProvider implements vscode.FileDecorationProvider, v
       }
       const previous = this.byRepo.get(root);
       this.byRepo.set(root, map);
+      this.totalClashes = [...this.byRepo.values()].reduce((n, m) => n + m.size, 0);
       const changed = changedPaths(previous, map).map((p) => vscode.Uri.file(path.join(root, p)));
       if (changed.length > 0) this._onDidChange.fire(changed);
     } catch (err) {

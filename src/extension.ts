@@ -38,6 +38,12 @@ let shelvesProvider: ShelvesTreeProvider | undefined;
 let commitContent: CommitContentProvider | undefined;
 let mergeConflicts: MergeConflictResolver | undefined;
 let clashDecorations: ClashDecorationProvider | undefined;
+/**
+ * Cached `diversion.clashDetection`. The clash provider consults this on every
+ * decoration request and every document change, which is far too hot for a
+ * `getConfiguration` round-trip; the config listener below keeps it current.
+ */
+let clashDetectionEnabled = true;
 const providers = new Map<string, DiversionScmProvider>();
 const ignoreManagers = new Map<string, IgnoreManager>();
 /**
@@ -191,10 +197,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     log,
   );
   mergeConflicts = new MergeConflictResolver(context.globalStorageUri, log);
+  clashDetectionEnabled = readSettings().clashDetection;
   clashDecorations = new ClashDecorationProvider(
     () => [...providers.values()].map((p) => p.repo),
     log,
-    () => readSettings().clashDetection,
+    () => clashDetectionEnabled,
   );
 
   context.subscriptions.push(
@@ -297,6 +304,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     vscode.workspace.onDidChangeWorkspaceFolders(() => { void scanWorkspaceFolders(); }),
     vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('diversion.clashDetection')) {
+        clashDetectionEnabled = readSettings().clashDetection;
+        log.info(`[settings] clash detection → ${clashDetectionEnabled ? 'on' : 'off'}`);
+        // Repaint: turning it off must clear existing badges, turning it on
+        // must fetch a snapshot rather than wait for the next file to render.
+        void clashDecorations?.refresh();
+      }
       if (e.affectsConfiguration('diversion.maxParallelProcesses')) {
         const next = readSettings().maxParallelProcesses;
         setDvConcurrencyLimit(next);
@@ -2612,7 +2626,7 @@ function promptRuleId(title: string): Thenable<string | undefined> {
 async function showClashesCommand(): Promise<void> {
   const provider = activeProvider();
   if (!provider) return;
-  if (!readSettings().clashDetection) {
+  if (!clashDetectionEnabled) {
     const enable = await vscode.window.showInformationMessage(
       'Diversion: clash detection is disabled.',
       'Enable It',
@@ -2621,6 +2635,7 @@ async function showClashesCommand(): Promise<void> {
     await vscode.workspace.getConfiguration('diversion').update(
       'clashDetection', true, vscode.ConfigurationTarget.Global,
     );
+    clashDetectionEnabled = true;
   }
 
   let clashes: Awaited<ReturnType<typeof provider.repo.clashingEdits>>;
