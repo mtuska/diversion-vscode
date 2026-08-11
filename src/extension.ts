@@ -6,7 +6,7 @@ import { DaemonClient, DaemonUnavailableError } from './diversion/daemon.js';
 import { detectRepo, findDiversionRoot, findNestedDiversionRoots } from './diversion/detect.js';
 import { Repo, MAX_COMMIT_MESSAGE_LEN } from './diversion/repo.js';
 import { readSettings } from './diversion/settings.js';
-import { setDvConcurrencyLimit, setOnDvMissing } from './diversion/cli.js';
+import { dvConcurrencyStats, setDvConcurrencyLimit, setOnDvMissing } from './diversion/cli.js';
 import { discoverDvBinary } from './diversion/discoverDv.js';
 import { DiversionScmProvider } from './scm/provider.js';
 import { QuickDiff, DV_SCHEME } from './scm/quickDiff.js';
@@ -822,6 +822,14 @@ async function perfTraceCommand(): Promise<void> {
     const d = new DaemonClient(settings.daemonUrl ? { baseUrl: settings.daemonUrl } : {});
     await d.workspaces();
   });
+
+  // Semaphore saturation is the answer to "everything is slow but each
+  // individual dv call looks fine" — the calls are queued, not slow.
+  const dv = dvConcurrencyStats();
+  log.info(
+    `[perf] dv process pool: ${dv.inFlight}/${dv.capacity} in flight, ${dv.queued} queued` +
+    (dv.queued > 0 ? ' — raise diversion.maxParallelProcesses if this stays high' : ''),
+  );
 
   log.info('────────────────────────────────────────');
   log.info('[perf] done — see the differences between cold and warm calls.');

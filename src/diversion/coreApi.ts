@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Semaphore } from '../util/semaphore.js';
+import { BoundedCache } from '../util/boundedCache.js';
 import { formatDay } from '../util/dates.js';
 import type { DaemonClient } from './daemon.js';
 import type { LoggerLike } from '../util/logCore.js';
@@ -48,30 +49,6 @@ const CORE_CONCURRENCY = 6;
 /** Bounded caches for immutable-by-id reads (commit-by-id, compare-by-pair). */
 const COMMIT_CACHE_CAP = 512;
 const COMPARE_CACHE_CAP = 256;
-
-/**
- * Insertion-ordered cache with a hard cap. `get` refreshes recency (LRU); on
- * overflow the oldest entry is evicted. Stores promises so identical in-flight
- * requests coalesce into one network call.
- */
-class BoundedCache<V> {
-  private readonly map = new Map<string, V>();
-  constructor(private readonly cap: number) {}
-  get(key: string): V | undefined {
-    const v = this.map.get(key);
-    if (v !== undefined) { this.map.delete(key); this.map.set(key, v); }
-    return v;
-  }
-  set(key: string, value: V): void {
-    if (this.map.has(key)) this.map.delete(key);
-    this.map.set(key, value);
-    if (this.map.size > this.cap) {
-      const oldest = this.map.keys().next().value as string | undefined;
-      if (oldest !== undefined) this.map.delete(oldest);
-    }
-  }
-  delete(key: string): void { this.map.delete(key); }
-}
 
 export interface CoreApiClientOptions {
   /** Override the CoreAPI base URL (defaults to the production endpoint). */

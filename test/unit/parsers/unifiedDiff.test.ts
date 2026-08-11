@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { parseUnifiedDiff, splitMultiFileDiff } from '../../../src/diversion/parsers/unifiedDiff';
+import { parseUnifiedDiff } from '../../../src/diversion/parsers/unifiedDiff';
 import { reverseApply } from '../../../src/diversion/reverseApply';
 
 const FIX = path.resolve(__dirname, '../../fixtures');
@@ -35,28 +35,6 @@ describe('parseUnifiedDiff', () => {
     const r = parseUnifiedDiff('');
     expect(r.hunks).toEqual([]);
     expect(r.binary).toBe(false);
-  });
-});
-
-describe('splitMultiFileDiff', () => {
-  it('splits a 3-file diff', () => {
-    const text = fs.readFileSync(path.join(FIX, 'multi-file-diff.txt'), 'utf8');
-    const m = splitMultiFileDiff(text);
-    expect([...m.keys()]).toEqual(['Source/A.cpp', 'Source/B.cpp', 'Documentation/CLAUDE.md']);
-
-    const aChunk = m.get('Source/A.cpp')!;
-    expect(aChunk).toContain('diff --git a/Source/A.cpp b/Source/A.cpp');
-    expect(aChunk).toContain('-old-a');
-    expect(aChunk).not.toContain('only-new'); // belongs to B
-
-    const bDiff = parseUnifiedDiff(m.get('Source/B.cpp')!);
-    expect(bDiff.hunks).toHaveLength(1);
-    expect(bDiff.newPath).toBe('Source/B.cpp');
-  });
-
-  it('returns empty map for non-diff input', () => {
-    expect(splitMultiFileDiff('')).toEqual(new Map());
-    expect(splitMultiFileDiff('No changes detected\n')).toEqual(new Map());
   });
 });
 

@@ -7,7 +7,15 @@ import { reverseApply } from '../diversion/reverseApply.js';
 import { looksBinary } from '../util/binary.js';
 import { toForwardSlashes } from '../util/path.js';
 import type { ChangeKind } from '../diversion/types.js';
+import { BoundedCache } from '../util/boundedCache.js';
 import type { Logger } from '../util/log.js';
+
+/**
+ * Cache bounds. `baseCache` holds whole file contents, so it is deliberately
+ * the smaller of the two; `served` holds only URIs.
+ */
+const BASE_CACHE_CAP = 128;
+const SERVED_CAP = 512;
 
 /** URI scheme used for "the base content of <path>". */
 export const DV_SCHEME = 'dv-base';
@@ -57,9 +65,14 @@ export class QuickDiff implements vscode.QuickDiffProvider, vscode.TextDocumentC
   private readonly _onDidChange = new vscode.EventEmitter<vscode.Uri>();
   readonly onDidChange = this._onDidChange.event;
 
-  /** dv-base URIs we've served, keyed by the underlying file path, so we can
-   *  fire targeted re-fetches when the base changes. */
-  private readonly served = new Map<string, vscode.Uri>();
+  /**
+   * dv-base URIs we've served, keyed by the underlying file path, so we can
+   * fire targeted re-fetches when the base changes. Bounded: this grew by one
+   * entry for every file opened in a session and was never pruned. Evicting
+   * the least-recently-served costs nothing — VS Code re-queries a document
+   * it still has open, which re-registers it.
+   */
+  private readonly served = new BoundedCache<vscode.Uri>(SERVED_CAP);
   /**
    * Cache of successfully-resolved base content, keyed by file path. The base
    * (last-committed) version is invariant under working-tree edits — it only
@@ -68,7 +81,7 @@ export class QuickDiff implements vscode.QuickDiffProvider, vscode.TextDocumentC
    * reverse-apply results are cached; the working-content fallbacks are not
    * (they aren't the real base).
    */
-  private readonly baseCache = new Map<string, { commitId: string | undefined; content: string }>();
+  private readonly baseCache = new BoundedCache<{ commitId: string | undefined; content: string }>(BASE_CACHE_CAP);
 
   constructor(
     private readonly lookup: RepoLookup,

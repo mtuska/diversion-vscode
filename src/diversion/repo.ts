@@ -51,6 +51,14 @@ export const MAX_COMMIT_MESSAGE_LEN = 16384;
 const CLASH_TTL_MS = 60_000;
 
 /**
+ * When a `since`/`until` bound is set we filter client-side, so we fetch this
+ * multiple of the caller's limit to give the date window room. The absolute
+ * cap keeps an open-ended "everything since 2020" from walking a whole repo.
+ */
+const DATE_OVERFETCH = 10;
+const MAX_DATE_SCAN = 1_000;
+
+/**
  * High-level operations on a single Diversion workspace. Wraps the CLI runner
  * and merges in daemon-sourced identity so status-bar / detection callers
  * don't always have to shell out.
@@ -458,19 +466,30 @@ export class Repo {
     showSquashed?: boolean;
   } = {}): Promise<CommitDetails[]> {
     const limit = opts.limit ?? 20;
-    const commits = opts.path
-      ? await this.fileHistory(opts.path, limit, opts.showSquashed ?? false)
-      : await this.core.listCommits(this.identity.repoId, { limit });
     const sinceMs = resolveDateBound(opts.since);
     const untilMs = resolveDateBound(opts.until);
-    if (sinceMs === undefined && untilMs === undefined) return commits;
-    return commits.filter((c) => {
+    const dated = sinceMs !== undefined || untilMs !== undefined;
+
+    // Date bounds are resolved client-side, so a naive implementation fetches
+    // `limit` commits and then filters — turning "commits from the last month,
+    // limit 20" into "of the newest 20 commits, those from the last month".
+    // That reads as "only 3 commits last month" when there were fifty, which
+    // is worse than an error because it looks like an answer. Over-fetch so
+    // the window has room, then trim back to what the caller asked for.
+    const fetchLimit = dated ? Math.min(MAX_DATE_SCAN, limit * DATE_OVERFETCH) : limit;
+    const commits = opts.path
+      ? await this.fileHistory(opts.path, fetchLimit, opts.showSquashed ?? false)
+      : await this.core.listCommits(this.identity.repoId, { limit: fetchLimit });
+    if (!dated) return commits;
+
+    const matching = commits.filter((c) => {
       const t = Date.parse(c.date);
       if (Number.isNaN(t)) return true; // don't drop commits we can't date
       if (sinceMs !== undefined && t < sinceMs) return false;
       if (untilMs !== undefined && t > untilMs) return false;
       return true;
     });
+    return matching.slice(0, limit);
   }
 
   /**

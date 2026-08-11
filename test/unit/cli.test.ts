@@ -96,3 +96,22 @@ describe('runDv stdin handling', () => {
     expect(r.exitCode).toBe(0);
   });
 });
+
+// Every parser we own keys on English text; if dv ever localizes its output,
+// `looksLikeError` returning false would turn failures into silent successes.
+describe('runDv locale', () => {
+  const nodeOpts = { cwd: process.cwd(), dvPath: 'node' as string };
+  const PRINT = 'process.stdout.write(`${process.env.LC_ALL}|${process.env.LANG}`)';
+
+  it('forces a C locale on the child', async () => {
+    const r = await runDv(['-e', PRINT], { ...nodeOpts, timeoutMs: 5_000 });
+    expect(r.stdout).toBe('C|C');
+  });
+
+  it('lets an explicit env override win', async () => {
+    const r = await runDv(['-e', PRINT], {
+      ...nodeOpts, timeoutMs: 5_000, env: { LC_ALL: 'fr_FR.UTF-8', LANG: 'fr_FR.UTF-8' },
+    });
+    expect(r.stdout).toBe('fr_FR.UTF-8|fr_FR.UTF-8');
+  });
+});

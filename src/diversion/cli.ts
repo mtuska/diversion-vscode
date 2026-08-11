@@ -70,6 +70,20 @@ export interface DvRunOptions {
 /** Default cap on buffered dv output (see {@link DvRunOptions.maxBytes}). */
 export const DEFAULT_MAX_BYTES = 64 * 1024 * 1024;
 
+/**
+ * Force a C locale on every dv invocation.
+ *
+ * Every parser we own keys on English text — `In repo` / `On branch` in the
+ * status parser, `No active locks`, the `Author:` / `Date:` labels in the log
+ * parser, and `looksLikeError`'s `/^Error:/`. Diversion has started localizing
+ * the desktop app; if the CLI follows, `looksLikeError` would silently start
+ * returning false and we would report failures as successes. That is a much
+ * worse failure than a garbled string, and this is the cheap insurance.
+ *
+ * Caller-supplied `env` still wins, so a test can opt out.
+ */
+const FORCED_LOCALE: NodeJS.ProcessEnv = { LC_ALL: 'C', LANG: 'C' };
+
 export interface DvResult {
   stdout: string;
   stderr: string;
@@ -160,7 +174,7 @@ function spawnDv(args: readonly string[], opts: DvRunOptions): Promise<DvResult>
     try {
       child = spawn(dvPath, [...args], {
         cwd: opts.cwd,
-        env: { ...process.env, ...opts.env },
+        env: { ...process.env, ...FORCED_LOCALE, ...opts.env },
         stdio: ['pipe', 'pipe', 'pipe'],
       });
     } catch (err) {
