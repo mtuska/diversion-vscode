@@ -655,7 +655,27 @@ export class Repo {
    * endpoint.
    */
   async fileChangesForCommit(commitId: string): Promise<FileChange[]> {
-    return this.core.commitChanges(this.identity.repoId, commitId);
+    const changes = await this.core.commitChanges(this.identity.repoId, commitId);
+    if (!changes.some((c) => c.isDirectory)) return changes;
+
+    // The compare endpoint collapses an added folder into a single tree entry
+    // and does not list what's inside it, so a commit that adds a directory
+    // shows up as one un-openable folder row. `dv show --name-status` reports
+    // the folder *and* every file under it, which is what we actually want.
+    // Only commits that contain a tree entry pay the process spawn.
+    try {
+      const r = await runDvOrThrow(
+        ['show', safeRef(commitId, 'commit'), '--name-status', '--color', 'never'],
+        { cwd: this.root, dvPath: this.dvPath, timeoutMs: 120_000 },
+      );
+      const expanded = dropAncestorDirectories(parseDiffNameStatus(r.stdout));
+      if (expanded.length > 0) return sortChanges(expanded);
+    } catch (err) {
+      this.logger.warn(
+        `[repo] could not expand directory entries for ${commitId}: ${(err as Error).message}`,
+      );
+    }
+    return changes;
   }
 
   /** Cherry-pick a commit's changes into the current workspace. */
@@ -944,6 +964,25 @@ function resolveDateBound(value: string | undefined): number | undefined {
   }
   const ms = Date.parse(trimmed);
   return Number.isNaN(ms) ? undefined : ms;
+}
+
+/**
+ * Drop entries that are merely an ancestor directory of another entry.
+ *
+ * `dv show --name-status` lists an added folder alongside each file inside it.
+ * The folder row is noise in a file list — and unlike the files, it can't be
+ * opened or diffed. A path that is a strict prefix of another entry's path can
+ * only be a directory, so no mode information is needed to spot them.
+ */
+export function dropAncestorDirectories(changes: readonly FileChange[]): FileChange[] {
+  const ancestors = new Set<string>();
+  for (const c of changes) {
+    const p = c.path;
+    for (let i = 0; i < p.length; i++) {
+      if (p[i] === '/' || p[i] === '\\') ancestors.add(p.slice(0, i));
+    }
+  }
+  return changes.filter((c) => !ancestors.has(c.path));
 }
 
 function sortChanges(changes: FileChange[]): FileChange[] {

@@ -687,15 +687,20 @@ const OBJECT_STATUS_KIND: Record<number, ChangeKind | undefined> = {
   4: 'deleted',
 };
 
+/** Unix mode for a tree (directory) entry, per the CoreAPI's FileMode enum. */
+const MODE_TREE = 16877;
+
 function mapComparisonItem(item: CoreComparisonItem): FileChange | undefined {
   const { base_item: base, other_item: other } = item;
-  if (!base && other) return { kind: 'added', path: other.path };
-  if (base && !other) return { kind: 'deleted', path: base.path };
+  const side = other ?? base;
+  const dir = side?.mode === MODE_TREE ? { isDirectory: true } : {};
+  if (!base && other) return { kind: 'added', path: other.path, ...dir };
+  if (base && !other) return { kind: 'deleted', path: base.path, ...dir };
   if (base && other) {
     if (other.prev_path && other.prev_path !== other.path) {
-      return { kind: 'renamed', path: other.path, fromPath: other.prev_path };
+      return { kind: 'renamed', path: other.path, fromPath: other.prev_path, ...dir };
     }
-    return { kind: 'modified', path: other.path };
+    return { kind: 'modified', path: other.path, ...dir };
   }
   return undefined;
 }

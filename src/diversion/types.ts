@@ -27,6 +27,13 @@ export interface FileChange {
   path: string;
   /** Original path for renames. */
   fromPath?: string;
+  /**
+   * True when this entry is a directory rather than a file. The CoreAPI
+   * compare endpoint reports an added folder as a single tree entry and does
+   * NOT list what's inside it, so callers that need real files have to notice
+   * and go elsewhere. See `Repo.fileChangesForCommit`.
+   */
+  isDirectory?: boolean;
 }
 
 export interface RepoIdentity {

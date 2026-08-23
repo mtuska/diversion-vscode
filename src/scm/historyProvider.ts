@@ -1,7 +1,9 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { commitContentUri } from './commitContent.js';
+import { formatCommitTooltip } from '../diversion/commitTooltip.js';
 import type { Repo } from '../diversion/repo.js';
+import type { CommitDetails } from '../diversion/types.js';
 import type { Logger } from '../util/log.js';
 
 /**
@@ -176,6 +178,7 @@ export class DiversionHistoryProvider implements vscode.SourceControlHistoryProv
           authorEmail: c.authorEmail,
           timestamp,
           references: refsByCommit.get(c.id),
+          tooltip: buildTooltip(c),
         };
       });
     } catch (err) {
@@ -265,6 +268,15 @@ export class DiversionHistoryProvider implements vscode.SourceControlHistoryProv
       return [];
     }
   }
+}
+
+/** Wrap the pure formatter in a MarkdownString for the graph's hover. */
+function buildTooltip(c: CommitDetails): vscode.MarkdownString {
+  const md = new vscode.MarkdownString(formatCommitTooltip(c));
+  // The message is arbitrary user content: never let it render command links.
+  md.isTrusted = false;
+  md.supportHtml = false;
+  return md;
 }
 
 function parseTimestampMillis(raw: string): number | undefined {

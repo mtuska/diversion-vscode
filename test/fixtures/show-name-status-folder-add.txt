@@ -1,0 +1,11 @@
+
+commit dv.commit.509 (dv.branch.1)
+Author: Montana Tuska <mtuska@frs.llc>
+Date:   08-23-2026 04:37:47
+
+	NOD-974 benchmark strategic graph hierarchy
+
+A	Source/ProjectNod/Private/Tests/Navigation
+A	Source/ProjectNod/Private/Tests/Navigation/NodStrategicGraphBenchmark.h
+A	Source/ProjectNod/Private/Tests/Navigation/NodStrategicGraphBenchmark.cpp
+A	Source/ProjectNod/Private/Tests/Navigation/NodStrategicGraphBenchmarkTests.cpp

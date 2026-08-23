@@ -570,3 +570,33 @@ describe('CoreApiClient token caching', () => {
     expect((daemon as unknown as { tokenCalls: { n: number } }).tokenCalls.n).toBe(1);
   });
 });
+
+describe('CoreApiClient compare directory entries', () => {
+  // Mode 16877 is a TREE. The endpoint returns an added folder as one such
+  // entry and does NOT list its contents, so callers must be able to tell.
+  it('flags tree entries so callers can expand them', async () => {
+    stubFetch([
+      ['/commits', { items: [{ commit_id: 'dv.commit.509', commit_message: 'x', created_ts: 1, parents: ['dv.commit.508'] }] }],
+      ['/compare', {
+        items: [
+          { base_item: null, other_item: { path: 'Source/Tests/Navigation', prev_path: null, hash: 'h', prev_hash: null, status: 2, mode: 16877 } },
+          { base_item: null, other_item: { path: 'src/a.ts', prev_path: null, hash: 'h', prev_hash: null, status: 2, mode: 33188 } },
+        ],
+      }],
+    ]);
+    const changes = await new CoreApiClient(fakeDaemon(), logger).commitChanges(REPO, 'dv.commit.509');
+    expect(changes).toEqual([
+      { kind: 'added', path: 'Source/Tests/Navigation', isDirectory: true },
+      { kind: 'added', path: 'src/a.ts' },
+    ]);
+  });
+
+  it('leaves isDirectory unset when the API omits a mode', async () => {
+    stubFetch([
+      ['/commits', { items: [{ commit_id: 'dv.commit.1', commit_message: 'x', created_ts: 1, parents: [] }] }],
+      ['/compare', { items: [{ base_item: null, other_item: { path: 'a.txt', prev_path: null, hash: 'h', prev_hash: null, status: 2 } }] }],
+    ]);
+    const [c] = await new CoreApiClient(fakeDaemon(), logger).commitChanges(REPO, 'dv.commit.1');
+    expect(c).not.toHaveProperty('isDirectory');
+  });
+});
